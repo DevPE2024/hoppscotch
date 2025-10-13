@@ -128,29 +128,8 @@ const mergeAdditionalMessages = (locale: string): void => {
 }
 
 const resolveCurrentLocale = async () =>
-  pipe(
-    // Resolve from locale and make sure it is in languages
-    await persistenceService.getLocalConfig("locale"),
-    O.fromNullable,
-    O.filter((locale) =>
-      pipe(
-        APP_LANGUAGES,
-        A.some(({ code }) => code === locale)
-      )
-    ),
-
-    // Else load from navigator.language
-    O.alt(() =>
-      pipe(
-        APP_LANGUAGES,
-        A.findFirst(({ code }) => navigator.language.startsWith(code)), // en-US should also match to en
-        O.map(({ code }) => code)
-      )
-    ),
-
-    // Else load fallback
-    O.getOrElse(() => FALLBACK_LANG_CODE)
-  )
+  // Force English as default language for TestPath
+  FALLBACK_LANG_CODE
 
 /**
  * Changes the application language. This function returns a promise as

@@ -71,56 +71,8 @@
         class="col-span-2 flex items-center justify-between space-x-2"
       >
         <div class="flex">
-          <tippy
-            v-if="
-              kernelMode === 'web' &&
-              downloadableLinks &&
-              downloadableLinks.length > 0
-            "
-            interactive
-            trigger="click"
-            theme="popover"
-            :on-shown="() => downloadableLinksRef.focus()"
-          >
-            <HoppButtonSecondary
-              :icon="IconDownload"
-              class="rounded hover:bg-primaryDark focus-visible:bg-primaryDark"
-            />
-            <template #content="{ hide }">
-              <div
-                ref="downloadableLinksRef"
-                class="flex flex-col focus:outline-none"
-                tabindex="0"
-                @keyup.escape="hide()"
-              >
-                <template v-for="link in downloadableLinks" :key="link.id">
-                  <HoppButtonSecondary
-                    v-if="link.show ?? true"
-                    :icon="link.icon"
-                    :label="link.text(t)"
-                    :blank="true"
-                    class="rounded hover:bg-primaryDark focus-visible:bg-primaryDark justify-between"
-                    :to="
-                      link.action.type === 'link' ? link.action.href : undefined
-                    "
-                    @click="
-                      link.action.type === 'custom' ? link.action.do() : null
-                    "
-                  />
-                </template>
-              </div>
-            </template>
-          </tippy>
-
-          <HoppButtonSecondary
-            v-tippy="{ theme: 'tooltip', allowHTML: true }"
-            :title="`${
-              mdAndLarger ? t('support.title') : t('app.options')
-            } <kbd>?</kbd>`"
-            :icon="IconLifeBuoy"
-            class="rounded hover:bg-primaryDark focus-visible:bg-primaryDark"
-            @click="invokeAction('modals.support.toggle')"
-          />
+          <!-- Download and Support buttons removed -->
+          <LocalSave />
         </div>
         <div
           class="flex"
@@ -129,25 +81,9 @@
               workspaceSelectorFlagEnabled && !currentUser,
           }"
         >
-          <div
-            v-if="currentUser === null"
-            class="inline-flex items-center space-x-2"
-          >
-            <HoppButtonSecondary
-              v-if="!workspaceSelectorFlagEnabled"
-              :icon="IconUploadCloud"
-              :label="t('header.save_workspace')"
-              class="!focus-visible:text-emerald-600 !hover:text-emerald-600 hidden h-8 border border-emerald-600/25 bg-emerald-500/10 !text-emerald-500 hover:border-emerald-600/20 hover:bg-emerald-600/20 focus-visible:border-emerald-600/20 focus-visible:bg-emerald-600/20 md:flex"
-              @click="invokeAction('modals.login.toggle')"
-            />
-            <HoppButtonPrimary
-              :label="t('header.login')"
-              class="h-8"
-              @click="invokeAction('modals.login.toggle')"
-            />
-          </div>
+          <!-- Login and Save Workspace buttons removed -->
           <TeamsMemberStack
-            v-else-if="
+            v-if="
               currentUser !== null &&
               workspace.type === 'team' &&
               selectedTeam &&
@@ -389,6 +325,7 @@ import IconUsers from "~icons/lucide/users"
 import IconChevronDown from "~icons/lucide/chevron-down"
 import IconLayoutDashboard from "~icons/lucide/layout-dashboard"
 import { AdditionalLinksService } from "~/services/additionalLinks.service"
+import LocalSave from "~/components/workspace/LocalSave.vue"
 
 const t = useI18n()
 const toast = useToast()
