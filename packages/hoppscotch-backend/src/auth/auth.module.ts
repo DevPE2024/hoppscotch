@@ -9,6 +9,8 @@ import { RTJwtStrategy } from './strategies/rt-jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { GithubStrategy } from './strategies/github.strategy';
 import { MicrosoftStrategy } from './strategies/microsoft.strategy';
+import { ProdifyAuthStrategy } from './prodify-auth.strategy';
+import { ProdifyAuthController } from './prodify-auth.controller';
 import { AuthProvider, authProviderCheck } from './helper';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -29,8 +31,8 @@ import { InfraConfigModule } from 'src/infra-config/infra-config.module';
     }),
     InfraConfigModule,
   ],
-  providers: [AuthService],
-  controllers: [AuthController],
+  providers: [AuthService, ProdifyAuthStrategy],
+  controllers: [AuthController, ProdifyAuthController],
 })
 export class AuthModule {
   static async register() {

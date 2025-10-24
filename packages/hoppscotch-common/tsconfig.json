@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ESNext",
-    "allowJs": true,
+    "allowJs": false,
     "useDefineForClassFields": true,
     "module": "ESNext",
     "moduleResolution": "node",
@@ -14,6 +14,7 @@
     "lib": ["ESNext", "DOM"],
     "skipLibCheck": true,
     "noUnusedLocals": true,
+    "noEmit": true,
     "paths": {
       "~/*": ["./src/*"],
       "@composables/*": ["./src/composables/*"],
@@ -35,12 +36,25 @@
   },
   "include": [
     "meta.ts",
-    "src/**/*.js",
     "src/*.ts",
     "src/**/*.ts",
     "src/**/*.d.ts",
     "src/**/*.tsx",
     "src/**/*.vue"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/*.spec.js",
+    "src/components/lenses/renderers/mixins/*.js",
+    "src/helpers/requestParams.js",
+    "src/helpers/syntax/gqlQueryLangMode.js",
+    "src/helpers/tern.js",
+    "src/helpers/ternlint.js",
+    "src/helpers/utils/debounce.js",
+    "src/helpers/utils/uri.js",
+    "src/helpers/utils/valid.js",
+    "src/workers/regex.js"
   ],
   "vueCompilerOptions": {
     "jsxTemplates": true,

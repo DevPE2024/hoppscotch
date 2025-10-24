@@ -28,20 +28,35 @@ export default defineConfig({
     // For 'util' polyfill required by dep of '@apidevtools/swagger-parser'
     "process.env": {},
     "process.platform": '"browser"',
+    global: "globalThis",
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      define: {
+        global: "globalThis",
+      },
+    },
   },
   server: {
     port: 3000,
+    hmr: {
+      overlay: false
+    }
   },
   preview: {
     port: 3000,
   },
   publicDir: path.resolve(__dirname, "../hoppscotch-common/public"),
   build: {
-    sourcemap: true,
-    emptyOutDir: true,
     rollupOptions: {
+      onwarn(warning, warn) {
+        if (warning.code === 'UNRESOLVED_IMPORT') return
+        warn(warning)
+      },
       maxParallelFileOps: 2,
     },
+    sourcemap: true,
+    emptyOutDir: true,
   },
   worker: {
     format: "es",
@@ -81,6 +96,7 @@ export default defineConfig({
       stream: "stream-browserify",
       util: "util",
       querystring: "qs",
+      buffer: "buffer",
     },
     dedupe: ["vue"],
   },
@@ -94,15 +110,15 @@ export default defineConfig({
       routeStyle: "nuxt",
       dirs: ["../hoppscotch-common/src/pages", "./src/pages"],
       importMode: "async",
-      onRoutesGenerated(routes) {
-        generateSitemap({
-          routes,
-          nuxtStyle: true,
-          allowRobots: true,
-          dest: ".sitemap-gen",
-          hostname: ENV.VITE_BASE_URL,
-        })
-      },
+      // onRoutesGenerated(routes) {
+      //   generateSitemap({
+      //     routes,
+      //     nuxtStyle: true,
+      //     allowRobots: true,
+      //     dest: ".sitemap-gen",
+      //     hostname: ENV.VITE_BASE_URL,
+      //   })
+      // },
     }),
     StaticCopy({
       targets: [

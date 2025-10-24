@@ -129,7 +129,7 @@
                 @click="hide()"
               />
               <div
-                class="flex px-4 py-2 opacity-50"
+                class="flex flex-col px-4 py-2 opacity-50"
                 @dblclick="
                   () => {
                     showDeveloperOptionModal()
@@ -137,7 +137,10 @@
                   }
                 "
               >
-                {{ `${t("app.name")} v${version}` }}
+                <div>{{ `TestPath v${version}` }}</div>
+                <div class="text-tiny mt-1">
+                  Based on <a href="https://github.com/hoppscotch/hoppscotch" target="_blank" class="underline">Hoppscotch</a> (MIT License)
+                </div>
               </div>
             </div>
           </template>

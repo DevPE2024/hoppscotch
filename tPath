@@ -3,20 +3,12 @@
   <head>
     <script>
       globalThis.import_meta_env = JSON.parse('"import_meta_env_placeholder"')
-      // Force favicon reload
-      var link = document.createElement('link');
-      link.type = 'image/png';
-      link.rel = 'icon';
-      link.href = '/favicon.png?v=' + Date.now();
-      document.head.appendChild(link);
     </script>
-    <title>TestPath</title>
+    <title>TestPath • Open source API development ecosystem</title>
     <meta charset="UTF-8" />
+    <link rel="icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="apple-touch-icon" href="/icon.png" />
-    <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#2DD4BF" />
-    <meta name="description" content="Open source API development ecosystem for testing and development" />
   </head>
   <body>
     <div id="app"></div>

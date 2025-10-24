@@ -13,9 +13,9 @@ export default <HoppModule>{
 
   onRootSetup() {
     useHead({
-      title: `${APP_INFO.name} • ${APP_INFO.shortDescription}`,
+      title: "TestPath",
       titleTemplate(title) {
-        return title === "Hoppscotch" ? title : `${title} • Hoppscotch`
+        return title === "TestPath" ? title : `${title} • TestPath`
       },
     })
   },

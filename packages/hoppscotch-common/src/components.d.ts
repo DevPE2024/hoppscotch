@@ -20,6 +20,7 @@ declare module 'vue' {
     AppBanner: typeof import('./components/app/Banner.vue')['default']
     AppContextMenu: typeof import('./components/app/ContextMenu.vue')['default']
     AppDeveloperOptions: typeof import('./components/app/DeveloperOptions.vue')['default']
+    AppEcosystemPopup: typeof import('./components/app/EcosystemPopup.vue')['default']
     AppFooter: typeof import('./components/app/Footer.vue')['default']
     AppGitHubStarButton: typeof import('./components/app/GitHubStarButton.vue')['default']
     AppHeader: typeof import('./components/app/Header.vue')['default']
@@ -293,6 +294,7 @@ declare module 'vue' {
     TeamsTeam: typeof import('./components/teams/Team.vue')['default']
     Tippy: typeof import('vue-tippy')['Tippy']
     WorkspaceCurrent: typeof import('./components/workspace/Current.vue')['default']
+    WorkspaceLocalSave: typeof import('./components/workspace/LocalSave.vue')['default']
     WorkspaceSelector: typeof import('./components/workspace/Selector.vue')['default']
   }
 }

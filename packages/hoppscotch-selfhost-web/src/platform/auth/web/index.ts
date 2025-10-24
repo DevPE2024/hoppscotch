@@ -113,13 +113,30 @@ async function setInitialUser() {
     const isRefreshSuccess = await refreshToken()
 
     if (isRefreshSuccess) {
-      setInitialUser()
+      // Evitar chamada recursiva que pode causar loop infinito
+      const res = await getInitialUserDetails()
+      if (res.data && res.data.me) {
+        const hoppBackendUser = res.data.me
+        const hoppUser: HoppUser = {
+          uid: hoppBackendUser.uid,
+          displayName: hoppBackendUser.displayName,
+          email: hoppBackendUser.email,
+          photoURL: hoppBackendUser.photoURL,
+          emailVerified: true,
+        }
+        await setUser(hoppUser)
+        authEvents$.next({
+          event: "login",
+          user: hoppUser,
+        })
+      }
     } else {
       await setUser(null)
       isGettingInitialUser.value = false
       await logout()
     }
 
+    isGettingInitialUser.value = false
     return
   }
 
@@ -248,11 +265,17 @@ export const def: AuthPlatformDef = {
     return null
   },
   async performAuthInit() {
-    const probableUser = JSON.parse(
-      (await persistenceService.getLocalConfig("login_state")) ?? "null"
-    )
-    probableUser$.next(probableUser)
-    await setInitialUser()
+    try {
+      const probableUser = JSON.parse(
+        (await persistenceService.getLocalConfig("login_state")) ?? "null"
+      )
+      probableUser$.next(probableUser)
+      await setInitialUser()
+    } catch (error) {
+      console.warn("Auth init failed, continuing without auth:", error)
+      // Continuar sem autenticação se houver erro
+      await setUser(null)
+    }
   },
 
   waitProbableLoginToConfirm() {

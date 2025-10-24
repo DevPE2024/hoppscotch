@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TestPath - Exemplo de Chamadas de API</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #ffffff;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .section {
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .method {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .get { background: #4ade80; color: #000; }
+        .post { background: #60a5fa; color: #000; }
+        .put { background: #fbbf24; color: #000; }
+        .delete { background: #f87171; color: #000; }
+        
+        .url-input {
+            width: 100%;
+            padding: 10px;
+            background: #3d3d3d;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #fff;
+            font-family: monospace;
+            margin: 10px 0;
+        }
+        
+        .btn {
+            background: #60a5fa;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            margin: 5px;
+        }
+        
+        .btn:hover {
+            background: #3b82f6;
+        }
+        
+        .response {
+            background: #1e1e1e;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            border-left: 4px solid #60a5fa;
+        }
+        
+        .example {
+            background: #3d3d3d;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+            border-left: 4px solid #4ade80;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-200 { background: #4ade80; color: #000; }
+        .status-404 { background: #f87171; color: #000; }
+        .status-500 { background: #fbbf24; color: #000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 TestPath - Exemplo de Chamadas de API</h1>
+            <p>Demonstração de como fazer requisições HTTP</p>
+        </div>
+        
+        <div class="section">
+            <h2>📡 Fazer uma Chamada de API</h2>
+            <p>Digite uma URL e escolha o método HTTP:</p>
+            
+            <div>
+                <label>Método:</label>
+                <button class="btn" onclick="setMethod('GET')">GET</button>
+                <button class="btn" onclick="setMethod('POST')">POST</button>
+                <button class="btn" onclick="setMethod('PUT')">PUT</button>
+                <button class="btn" onclick="setMethod('DELETE')">DELETE</button>
+            </div>
+            
+            <input type="text" id="urlInput" class="url-input" placeholder="https://jsonplaceholder.typicode.com/posts/1" value="http://localhost:3170/health">
+            <button class="btn" onclick="makeRequest()">🚀 Fazer Requisição</button>
+            
+            <div id="response" class="response" style="display: none;"></div>
+        </div>
+        
+        <div class="section">
+            <h2>📚 Exemplos Práticos</h2>
+            
+            <div class="example">
+                <h3><span class="method get">GET</span> Health Check</h3>
+                <p><strong>URL:</strong> http://localhost:3170/health</p>
+                <p><strong>Descrição:</strong> Verifica se a API está funcionando</p>
+                <button class="btn" onclick="testExample('http://localhost:3170/health', 'GET')">Testar</button>
+            </div>
+            
+            <div class="example">
+                <h3><span class="method get">GET</span> API Pública (JSONPlaceholder)</h3>
+                <p><strong>URL:</strong> https://jsonplaceholder.typicode.com/posts/1</p>
+                <p><strong>Descrição:</strong> Busca um post de exemplo</p>
+                <button class="btn" onclick="testExample('https://jsonplaceholder.typicode.com/posts/1', 'GET')">Testar</button>
+            </div>
+            
+            <div class="example">
+                <h3><span class="method post">POST</span> Criar Post</h3>
+                <p><strong>URL:</strong> https://jsonplaceholder.typicode.com/posts</p>
+                <p><strong>Descrição:</strong> Cria um novo post</p>
+                <button class="btn" onclick="testPostExample()">Testar</button>
+            </div>
+            
+            <div class="example">
+                <h3><span class="method get">GET</span> API do GitHub</h3>
+                <p><strong>URL:</strong> https://api.github.com/users/octocat</p>
+                <p><strong>Descrição:</strong> Busca informações do usuário Octocat</p>
+                <button class="btn" onclick="testExample('https://api.github.com/users/octocat', 'GET')">Testar</button>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>🔧 Como Usar</h2>
+            <ol>
+                <li><strong>Digite a URL</strong> que você quer testar no campo acima</li>
+                <li><strong>Escolha o método HTTP</strong> (GET, POST, PUT, DELETE)</li>
+                <li><strong>Clique em "Fazer Requisição"</strong> para enviar a requisição</li>
+                <li><strong>Veja a resposta</strong> no campo abaixo</li>
+            </ol>
+            
+            <h3>💡 Dicas:</h3>
+            <ul>
+                <li>Use <strong>GET</strong> para buscar dados</li>
+                <li>Use <strong>POST</strong> para criar novos dados</li>
+                <li>Use <strong>PUT</strong> para atualizar dados existentes</li>
+                <li>Use <strong>DELETE</strong> para remover dados</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let currentMethod = 'GET';
+        
+        function setMethod(method) {
+            currentMethod = method;
+            document.querySelectorAll('.btn').forEach(btn => {
+                btn.style.background = '#60a5fa';
+            });
+            event.target.style.background = '#3b82f6';
+        }
+        
+        async function makeRequest() {
+            const url = document.getElementById('urlInput').value;
+            const responseDiv = document.getElementById('response');
+            
+            if (!url) {
+                alert('Por favor, digite uma URL');
+                return;
+            }
+            
+            responseDiv.style.display = 'block';
+            responseDiv.innerHTML = '⏳ Fazendo requisição...';
+            
+            try {
+                const options = {
+                    method: currentMethod,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                };
+                
+                const response = await fetch(url, options);
+                const data = await response.json();
+                
+                const statusClass = response.ok ? 'status-200' : 'status-404';
+                
+                responseDiv.innerHTML = `
+                    <div style="margin-bottom: 10px;">
+                        <span class="status ${statusClass}">${response.status} ${response.statusText}</span>
+                        <strong>${currentMethod} ${url}</strong>
+                    </div>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+            } catch (error) {
+                responseDiv.innerHTML = `
+                    <div style="color: #f87171;">
+                        <strong>❌ Erro:</strong> ${error.message}
+                    </div>
+                `;
+            }
+        }
+        
+        function testExample(url, method) {
+            document.getElementById('urlInput').value = url;
+            setMethod(method);
+            makeRequest();
+        }
+        
+        async function testPostExample() {
+            const url = 'https://jsonplaceholder.typicode.com/posts';
+            const responseDiv = document.getElementById('response');
+            
+            responseDiv.style.display = 'block';
+            responseDiv.innerHTML = '⏳ Fazendo requisição POST...';
+            
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        title: 'Teste do TestPath',
+                        body: 'Este é um post de teste criado pelo TestPath!',
+                        userId: 1
+                    })
+                });
+                
+                const data = await response.json();
+                
+                responseDiv.innerHTML = `
+                    <div style="margin-bottom: 10px;">
+                        <span class="status status-200">${response.status} ${response.statusText}</span>
+                        <strong>POST ${url}</strong>
+                    </div>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+            } catch (error) {
+                responseDiv.innerHTML = `
+                    <div style="color: #f87171;">
+                        <strong>❌ Erro:</strong> ${error.message}
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>

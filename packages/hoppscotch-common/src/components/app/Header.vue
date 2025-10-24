@@ -13,7 +13,20 @@
           paddingLeft: platform.ui?.appHeader?.paddingLeft?.value,
         }"
       >
-        <div class="flex">
+        <div class="flex items-center gap-3">
+          <!-- Logo TestPath -->
+          <div class="h-10 w-10 rounded-full flex items-center justify-center text-white font-bold text-xl shadow-lg" style="background: linear-gradient(135deg, #2DD4BF 0%, #EC4899 50%, #A855F7 100%);">
+            T
+          </div>
+          
+          <!-- Ícone do Ecossistema -->
+          <HoppButtonSecondary
+            :title="t('ecosystem.title')"
+            :icon="IconGrid3x3"
+            class="!text-accent hover:!text-accentDark"
+            @click="showEcosystemPopup = true"
+          />
+          
           <tippy
             v-if="kernelMode === 'desktop'"
             interactive
@@ -26,7 +39,7 @@
                 <span
                   class="!font-bold uppercase tracking-wide !text-secondaryDark pr-1"
                 >
-                  {{ instanceDisplayName }}
+                  TESTPATH
                 </span>
                 <span
                   v-if="
@@ -55,7 +68,7 @@
           <HoppButtonSecondary
             v-else
             class="!font-bold uppercase tracking-wide !text-secondaryDark hover:bg-primaryDark focus-visible:bg-primaryDark"
-            :label="t('app.name')"
+            label="TESTPATH"
             to="/"
           />
         </div>
@@ -290,6 +303,12 @@
       @hide-modal="confirmRemove = false"
       @resolve="deleteTeam"
     />
+    
+    <!-- Ecosystem Popup -->
+    <AppEcosystemPopup 
+      :show="showEcosystemPopup" 
+      @close="showEcosystemPopup = false" 
+    />
   </div>
 </template>
 
@@ -297,6 +316,7 @@
 import { getKernelMode } from "@hoppscotch/kernel"
 
 import { useI18n } from "@composables/i18n"
+import AppEcosystemPopup from "./EcosystemPopup.vue"
 import { useReadonlyStream } from "@composables/stream"
 import { defineActionHandler, invokeAction } from "@helpers/actions"
 import { breakpointsTailwind, useBreakpoints, useNetwork } from "@vueuse/core"
@@ -324,6 +344,7 @@ import IconUserPlus from "~icons/lucide/user-plus"
 import IconUsers from "~icons/lucide/users"
 import IconChevronDown from "~icons/lucide/chevron-down"
 import IconLayoutDashboard from "~icons/lucide/layout-dashboard"
+import IconGrid3x3 from "~icons/lucide/grid-3x3"
 import { AdditionalLinksService } from "~/services/additionalLinks.service"
 import LocalSave from "~/components/workspace/LocalSave.vue"
 
@@ -571,6 +592,9 @@ const settings = ref<any | null>(null)
 const dashboard = ref<any | null>(null)
 const logout = ref<any | null>(null)
 const accountActions = ref<any | null>(null)
+
+// Ecosystem popup state
+const showEcosystemPopup = ref(false)
 
 defineActionHandler("modals.team.edit", handleTeamEdit)
 
