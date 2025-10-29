@@ -260,3 +260,10 @@ WHITELISTED_ORIGINS=http://localhost:3000,http://localhost:3100,http://localhost
 **Status:** ✅ **PRONTO PARA USO**
 
 
+
+
+
+
+
+
+
