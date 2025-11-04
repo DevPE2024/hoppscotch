@@ -12,26 +12,24 @@ import * as E from "fp-ts/Either"
 import { KernelInterceptorService } from "~/services/kernel-interceptor.service"
 import { content } from "@hoppscotch/kernel"
 import { refreshToken, OAuth2ParamSchema } from "../utils"
+import {
+  AuthCodeGrantTypeParams,
+  OAuth2AuthRequestParam,
+} from "@hoppscotch/data"
 
 const persistenceService = getService(PersistenceService)
 const interceptorService = getService(KernelInterceptorService)
 
-const AuthCodeOauthFlowParamsSchema = z
-  .object({
-    authEndpoint: z.string(),
-    tokenEndpoint: z.string(),
-    clientID: z.string(),
-    clientSecret: z.string().optional(),
-    scopes: z.string().optional(),
-    isPKCE: z.boolean(),
-    codeVerifierMethod: z.enum(["plain", "S256"]).optional(),
-    authRequestParams: z.array(
-      OAuth2ParamSchema.omit({
-        sendIn: true,
-      })
-    ),
-    refreshRequestParams: z.array(OAuth2ParamSchema),
+// Use the existing schema from hoppscotch-data but ensure required arrays
+const AuthCodeOauthFlowParamsSchema = AuthCodeGrantTypeParams.omit({
+  grantType: true,
+  token: true,
+})
+  .extend({
+    // Override optional arrays to be required for the service layer
+    authRequestParams: z.array(OAuth2AuthRequestParam),
     tokenRequestParams: z.array(OAuth2ParamSchema),
+    refreshRequestParams: z.array(OAuth2ParamSchema),
   })
   .refine(
     (params) => {
@@ -93,11 +91,19 @@ const initAuthCodeOauthFlow = async ({
   let codeVerifier: string | undefined
   let codeChallenge: string | undefined
 
+  // Ensure backward compatibility for collections that were imported before
+  // `codeVerifierMethod` was added. If PKCE is enabled but the method is
+  // missing, default to 'plain' as requested by the user.
+  const codeVerifierMethodNormalized =
+    isPKCE && !codeVerifierMethod ? ("plain" as const) : codeVerifierMethod
+
   if (isPKCE) {
     codeVerifier = generateCodeVerifier()
+    // codeVerifierMethodNormalized might be undefined only if isPKCE is false,
+    // but here we guard with isPKCE so it's safe to pass a value.
     codeChallenge = await generateCodeChallenge(
       codeVerifier,
-      codeVerifierMethod
+      codeVerifierMethodNormalized
     )
   }
 
@@ -139,7 +145,8 @@ const initAuthCodeOauthFlow = async ({
     clientSecret,
     clientID,
     isPKCE,
-    codeVerifierMethod,
+    // Persist the normalized method so subsequent redirect handling has a value
+    codeVerifierMethod: codeVerifierMethodNormalized,
     scopes,
     authRequestParams,
     refreshRequestParams,

@@ -1,20 +1,20 @@
 # This step is used to build a custom build of Caddy to prevent
 # vulnerable packages on the dependency chain
-FROM alpine:3.22.1 AS caddy_builder
+FROM alpine:3.22.2 AS caddy_builder
 RUN apk add --no-cache curl git && \
   mkdir -p /tmp/caddy-build && \
-  curl -L -o /tmp/caddy-build/src.tar.gz https://github.com/caddyserver/caddy/releases/download/v2.10.0/caddy_2.10.0_src.tar.gz
+  curl -L -o /tmp/caddy-build/src.tar.gz https://github.com/caddyserver/caddy/releases/download/v2.10.2/caddy_2.10.2_src.tar.gz
 
 # Checksum verification of caddy source
-RUN expected="62ba008d9e9fd354e8b28be11de59c6a213f9153f2e9de451417c0b4eb13d9f3" && \
+RUN expected="a9efa00c161922dd24650fd0bee2f4f8bb2fb69ff3e63dcc44f0694da64bb0cf" && \
   actual=$(sha256sum /tmp/caddy-build/src.tar.gz | cut -d' ' -f1) && \
   [ "$actual" = "$expected" ] && \
   echo "✅ Caddy Source Checksum OK" || \
   (echo "❌ Caddy Source Checksum failed!" && exit 1)
 
-# Install Go 1.25.0 from GitHub releases to fix CVE-2025-47907
+# Install Go 1.25.3 from GitHub releases to fix CVE-2025-47907
 ARG TARGETARCH
-ENV GOLANG_VERSION=1.25.0
+ENV GOLANG_VERSION=1.25.3
 # Download and install Go from the official tarball
 RUN case "${TARGETARCH}" in amd64) GOARCH=amd64 ;; arm64) GOARCH=arm64 ;; *) echo "Unsupported arch: ${TARGETARCH}" && exit 1 ;; esac && \
   curl -fsSL "https://go.dev/dl/go${GOLANG_VERSION}.linux-${GOARCH}.tar.gz" -o go.tar.gz && \
@@ -27,10 +27,8 @@ ENV PATH="/usr/local/go/bin:${PATH}" \
 
 WORKDIR /tmp/caddy-build
 RUN tar xvf /tmp/caddy-build/src.tar.gz && \
-  # Patch to resolve GHSA-vrw8-fxc6-2r93 on chi
-  go get github.com/go-chi/chi/v5@v5.2.2 && \
-  # Patch to resolve GHSA-2x5j-vhc8-9cwm on circl
-  go get github.com/cloudflare/circl@v1.6.1 && \
+  # Patch to resolve CVE on quic-go
+  go get github.com/quic-go/quic-go@v0.55.0 && \
   # Clean up any existing vendor directory and regenerate with updated deps
   rm -rf vendor && \
   go mod tidy && \
@@ -43,12 +41,27 @@ RUN go build
 
 
 # Shared Node.js base with optimized NPM installation
-FROM alpine:3.22.1 AS node_base
-RUN apk add --no-cache nodejs curl tini && \
-  # Install NPM from source, as Alpine version is old and has dependency vulnerabilities
-  # TODO: Find a better method which is resistant to supply chain attacks
-  sh -c "curl -qL https://www.npmjs.com/install.sh | env npm_install=11.5.2 sh" && \
-  npm install -g pnpm@10.15.0 @import-meta-env/cli
+FROM alpine:3.22.2 AS node_base
+# Install dependencies
+RUN apk add --no-cache nodejs curl bash tini ca-certificates \
+  && mkdir -p /tmp/npm-install
+# Set working directory for NPM installation
+WORKDIR /tmp/npm-install
+# Download NPM tarball
+RUN curl -fsSL https://registry.npmjs.org/npm/-/npm-11.6.2.tgz -o npm.tgz
+# Verify checksum
+RUN expected="585f95094ee5cb2788ee11d90f2a518a7c9ef6e083fa141d0b63ca3383675a20" \
+  && actual=$(sha256sum npm.tgz | cut -d' ' -f1) \
+  && [ "$actual" = "$expected" ] \
+  && echo "✅ NPM Tarball Checksum OK" \
+  || (echo "❌ NPM Tarball Checksum failed!" && exit 1)
+# Install NPM from verified tarball and global packages
+RUN tar -xzf npm.tgz && \
+  cd package && \
+  node bin/npm-cli.js install -g npm@11.6.2 && \
+  cd / && \
+  rm -rf /tmp/npm-install && \
+  npm install -g pnpm@10.18.3 @import-meta-env/cli
 
 
 
@@ -187,7 +200,7 @@ COPY aio-subpath-access.Caddyfile /etc/caddy/aio-subpath-access.Caddyfile
 
 ENTRYPOINT [ "tini", "--" ]
 COPY --chmod=755 healthcheck.sh /
-HEALTHCHECK --interval=2s CMD /bin/sh /healthcheck.sh
+HEALTHCHECK --interval=2s --start-period=15s CMD /bin/sh /healthcheck.sh
 
 WORKDIR /dist/backend
 CMD ["node", "/usr/src/app/aio_run.mjs"]

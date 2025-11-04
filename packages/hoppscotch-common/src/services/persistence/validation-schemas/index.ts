@@ -85,6 +85,7 @@ const SettingsDefSchema = z.object({
   CUSTOM_NAMING_STYLE: z.string().optional().catch(""),
 
   EXPERIMENTAL_SCRIPTING_SANDBOX: z.optional(z.boolean()),
+  ENABLE_EXPERIMENTAL_MOCK_SERVERS: z.optional(z.boolean()),
 })
 
 const HoppRESTRequestSchema = entityReference(HoppRESTRequest)
@@ -379,6 +380,7 @@ export const SECRET_ENVIRONMENT_VARIABLE_SCHEMA = z.union([
         .object({
           key: z.string(),
           value: z.string(),
+          initialValue: z.string().optional().catch(""),
           varIndex: z.number(),
         })
         .strict()
@@ -401,6 +403,18 @@ export const CURRENT_ENVIRONMENT_VALUE_SCHEMA = z.union([
         })
         .strict()
     )
+  ),
+])
+
+export const CURRENT_SORT_VALUES_SCHEMA = z.union([
+  z.object({}).strict(),
+
+  z.record(
+    z.string(),
+    z.object({
+      sortBy: z.enum(["name"]),
+      sortOrder: z.enum(["asc", "desc"]),
+    })
   ),
 ])
 
@@ -511,8 +525,9 @@ const HoppRESTSaveContextSchema = z.nullable(
       .object({
         originLocation: z.literal("user-collection"),
         folderPath: z.string(),
-        requestIndex: z.number(),
+        requestIndex: z.optional(z.number()),
         exampleID: z.optional(z.string()),
+        requestRefID: z.optional(z.string()),
       })
       .strict(),
     z
@@ -522,6 +537,7 @@ const HoppRESTSaveContextSchema = z.nullable(
         teamID: z.optional(z.string()),
         collectionID: z.optional(z.string()),
         exampleID: z.optional(z.string()),
+        requestRefID: z.optional(z.string()),
       })
       .strict(),
   ])

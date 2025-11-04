@@ -37,8 +37,11 @@ import IconLibrary from "~icons/lucide/library?raw"
 import { isComment } from "./helpers"
 import { transformInheritedCollectionVariablesToAggregateEnv } from "~/helpers/utils/inheritedCollectionVarTransformer"
 import { HoppInheritedProperty } from "~/helpers/types/HoppInheritedProperties"
+import {
+  ENV_VAR_NAME_REGEX,
+  HOPP_ENVIRONMENT_REGEX,
+} from "~/helpers/environment-regex"
 
-const HOPP_ENVIRONMENT_REGEX = /(<<[a-zA-Z0-9-_]+>>)/g
 const HOPP_ENV_HIGHLIGHT =
   "cursor-help transition rounded px-1 focus:outline-none mx-0.5 env-highlight"
 const HOPP_REQUEST_VARIABLE_HIGHLIGHT = "request-variable-highlight"
@@ -98,9 +101,9 @@ const cursorTooltipField = (aggregateEnvs: AggregateEnvironment[]) =>
       // Tracking the start and the end of the words
       let start = pos
       let end = pos
-      while (start > from && /[a-zA-Z0-9-_]+/.test(text[start - from - 1]))
+      while (start > from && ENV_VAR_NAME_REGEX.test(text[start - from - 1]))
         start--
-      while (end < to && /[a-zA-Z0-9-_]+/.test(text[end - from])) end++
+      while (end < to && ENV_VAR_NAME_REGEX.test(text[end - from])) end++
 
       if (
         (start === pos && side < 0) ||
@@ -142,10 +145,15 @@ const cursorTooltipField = (aggregateEnvs: AggregateEnvironment[]) =>
             ? tooltipEnv.sourceEnvID!
             : currentSelectedEnvironment.id
 
-      const hasSecretStored = secretEnvironmentService.hasSecretValue(
+      const hasSecretValueStored = secretEnvironmentService.hasSecretValue(
         tooltipSourceEnvID,
         tooltipEnv?.key ?? ""
       )
+      const hasSecretInitialValueStored =
+        secretEnvironmentService.hasSecretInitialValue(
+          tooltipSourceEnvID,
+          tooltipEnv?.key ?? ""
+        )
 
       // We need to check if the environment is a secret and if it has a secret value stored in the secret environment service
       // If it is a secret and has a secret value, we need to show "******" in the tooltip
@@ -155,12 +163,12 @@ const cursorTooltipField = (aggregateEnvs: AggregateEnvironment[]) =>
       // If the source environment is not found, we need to show "Not Found" in the tooltip, ie the the environment
       // is not defined in the selected environment or the global environment
       if (isSecret) {
-        if (!hasSecretStored && envInitialValue) {
+        if (hasSecretValueStored && hasSecretInitialValueStored) {
           envInitialValue = "******"
-        } else if (hasSecretStored && !envInitialValue) {
           envCurrentValue = "******"
-        } else if (hasSecretStored && envInitialValue) {
+        } else if (!hasSecretValueStored && hasSecretInitialValueStored) {
           envInitialValue = "******"
+        } else if (hasSecretValueStored && !hasSecretInitialValueStored) {
           envCurrentValue = "******"
         } else {
           envInitialValue = "Empty"

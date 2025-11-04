@@ -49,11 +49,14 @@
       @drop-request="dropRequest"
       @drop-collection="dropCollection"
       @display-modal-add="displayModalAdd(true)"
-      @display-modal-import-export="displayModalImportExport(true)"
+      @display-modal-import-export="
+        displayModalImportExport(true, 'my-collections')
+      "
       @duplicate-collection="duplicateCollection"
       @duplicate-request="duplicateRequest"
       @duplicate-response="duplicateResponse"
       @edit-properties="editProperties"
+      @create-mock-server="createMockServer"
       @export-data="exportData"
       @remove-collection="removeCollection"
       @remove-folder="removeFolder"
@@ -63,19 +66,21 @@
       @select="selectPicked"
       @select-response="selectResponse"
       @select-request="selectRequest"
+      @sort-collections="sortCollections"
       @update-request-order="updateRequestOrder"
       @update-collection-order="updateCollectionOrder"
     />
+
     <CollectionsTeamCollections
       v-else
       :collections-type="collectionsType"
       :team-collection-list="
-        filterTexts.length > 0 ? teamsSearchResults : teamCollectionList
+        filterTexts.length > 0 ? teamsSearchResults : teamCollections
       "
       :team-loading-collections="
         filterTexts.length > 0
           ? collectionsBeingLoadedFromSearch
-          : teamLoadingCollections
+          : teamCollectionService.loadingCollections.value
       "
       :filter-text="filterTexts"
       :export-loading="exportLoading"
@@ -100,6 +105,7 @@
       @edit-request="editRequest"
       @edit-response="editResponse"
       @edit-properties="editProperties"
+      @create-mock-server="createTeamMockServer"
       @export-data="exportData"
       @expand-team-collection="expandTeamCollection"
       @remove-collection="removeCollection"
@@ -115,6 +121,7 @@
       "
       @share-request="shareRequest"
       @select-request="selectRequest"
+      @sort-collections="sortCollections"
       @select-response="selectResponse"
       @select="selectPicked"
       @update-request-order="updateRequestOrder"
@@ -215,6 +222,8 @@
       :collection-runner-data="collectionRunnerData"
       @hide-modal="showCollectionsRunnerModal = false"
     />
+
+    <MockServerCreateMockServer />
   </div>
 </template>
 
@@ -246,12 +255,14 @@ import {
   getCompleteCollectionTree,
   teamCollToHoppRESTColl,
 } from "~/helpers/backend/helpers"
+import { handleTokenValidation } from "~/helpers/handleTokenValidation"
 import {
   createChildCollection,
   createNewRootCollection,
   deleteCollection,
   duplicateTeamCollection,
   moveRESTTeamCollection,
+  sortTeamCollections,
   updateOrderRESTTeamCollection,
   updateTeamCollection,
 } from "~/helpers/backend/mutations/TeamCollection"
@@ -274,7 +285,6 @@ import {
   resolveSaveContextOnRequestReorder,
 } from "~/helpers/collection/request"
 import { TeamCollection } from "~/helpers/teams/TeamCollection"
-import TeamCollectionAdapter from "~/helpers/teams/TeamCollectionAdapter"
 import TeamEnvironmentAdapter from "~/helpers/teams/TeamEnvironmentAdapter"
 import { TeamSearchService } from "~/helpers/teams/TeamsSearch.service"
 import { HoppInheritedProperty } from "~/helpers/types/HoppInheritedProperties"
@@ -298,6 +308,8 @@ import {
   saveRESTRequestAs,
   updateRESTCollectionOrder,
   updateRESTRequestOrder,
+  sortRESTCollection,
+  sortRESTFolder,
 } from "~/newstore/collections"
 
 import { useLocalState } from "~/newstore/localstate"
@@ -314,6 +326,9 @@ import { CollectionRunnerData } from "../http/test/RunnerModal.vue"
 import { HoppCollectionVariable } from "@hoppscotch/data"
 import { SecretEnvironmentService } from "~/services/secret-environment.service"
 import { CurrentValueService } from "~/services/current-environment-value.service"
+import { TeamCollectionsService } from "~/services/team-collection.service"
+import { SortOptions } from "~/helpers/backend/graphql"
+import { CurrentSortValuesService } from "~/services/current-sort.service"
 
 const t = useI18n()
 const toast = useToast()
@@ -381,6 +396,7 @@ const currentUser = useReadonlyStream(
   platform.auth.getCurrentUserStream(),
   platform.auth.getCurrentUser()
 )
+
 const myCollections = useReadonlyStream(restCollections$, [], "deep")
 
 // Dragging
@@ -392,21 +408,18 @@ const requestMoveLoading = ref<string[]>([])
 const secretEnvironmentService = useService(SecretEnvironmentService)
 const currentEnvironmentValueService = useService(CurrentValueService)
 
+// Sorting service to get and set sort options for collections and folders
+const currentSortValuesService = useService(CurrentSortValuesService)
+
 // TeamList-Adapter
 const workspaceService = useService(WorkspaceService)
 const teamListAdapter = workspaceService.acquireTeamListAdapter(null)
 const REMEMBERED_TEAM_ID = useLocalState("REMEMBERED_TEAM_ID")
 
-// Team Collection Adapter
-const teamCollectionAdapter = new TeamCollectionAdapter(null)
-const teamCollectionList = useReadonlyStream(
-  teamCollectionAdapter.collections$,
-  []
-)
-const teamLoadingCollections = useReadonlyStream(
-  teamCollectionAdapter.loadingCollections$,
-  []
-)
+// Team Collection Service
+const teamCollectionService = useService(TeamCollectionsService)
+const teamCollections = teamCollectionService.collections
+
 const teamEnvironmentAdapter = new TeamEnvironmentAdapter(undefined)
 
 const {
@@ -505,7 +518,6 @@ onMounted(async () => {
 const switchToMyCollections = () => {
   collectionsType.value.type = "my-collections"
   collectionsType.value.selectedTeam = undefined
-  teamCollectionAdapter.changeTeamID(null)
 }
 
 /**
@@ -530,13 +542,12 @@ const expandTeamCollection = (collectionID: string) => {
     return
   }
 
-  teamCollectionAdapter.expandCollection(collectionID)
+  teamCollectionService.expandCollection(collectionID)
 }
 
 const updateSelectedTeam = (team: TeamWorkspace) => {
   if (team) {
     collectionsType.value.type = "team-collections"
-    teamCollectionAdapter.changeTeamID(team.teamID)
     collectionsType.value.selectedTeam = team
     REMEMBERED_TEAM_ID.value = team.teamID
     emit("update-team", team)
@@ -755,7 +766,14 @@ const displayModalEditResponse = (show: boolean) => {
   if (!show) resetSelectedData()
 }
 
-const displayModalImportExport = (show: boolean) => {
+const displayModalImportExport = async (
+  show: boolean,
+  collectionType?: string
+) => {
+  if (collectionType === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
+  }
   showModalImportExport.value = show
 
   if (!show) resetSelectedData()
@@ -779,8 +797,14 @@ const displayTeamModalAdd = (show: boolean) => {
   teamListAdapter.fetchList()
 }
 
-const addNewRootCollection = (name: string) => {
+const addNewRootCollection = async (name: string) => {
   if (collectionsType.value.type === "my-collections") {
+    modalLoadingState.value = true
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) {
+      modalLoadingState.value = false
+      return
+    }
     addRESTCollection(
       makeCollection({
         name,
@@ -802,6 +826,7 @@ const addNewRootCollection = (name: string) => {
       isRootCollection: true,
     })
 
+    modalLoadingState.value = false
     displayModalAdd(false)
   } else if (hasTeamWriteAccess.value) {
     if (!collectionsType.value.selectedTeam) return
@@ -841,7 +866,7 @@ const addRequest = (payload: {
   displayModalAddRequest(true)
 }
 
-const onAddRequest = (requestName: string) => {
+const onAddRequest = async (requestName: string) => {
   const newRequest = {
     ...getDefaultRESTRequest(),
     name: requestName,
@@ -850,6 +875,9 @@ const onAddRequest = (requestName: string) => {
   const path = editingFolderPath.value
   if (!path) return
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
+
     const insertionIndex = saveRESTRequestAs(path, newRequest)
 
     tabs.createNewTab({
@@ -860,6 +888,7 @@ const onAddRequest = (requestName: string) => {
         originLocation: "user-collection",
         folderPath: path,
         requestIndex: insertionIndex,
+        requestRefID: newRequest._ref_id,
       },
       inheritedProperties: cascadeParentCollectionForProperties(path, "rest"),
     })
@@ -912,9 +941,10 @@ const onAddRequest = (requestName: string) => {
               requestID: createRequestInCollection.id,
               collectionID: path,
               teamID: createRequestInCollection.collection.team.id,
+              requestRefID: newRequest._ref_id,
             },
             inheritedProperties:
-              teamCollectionAdapter.cascadeParentCollectionForProperties(path),
+              teamCollectionService.cascadeParentCollectionForProperties(path),
           })
 
           modalLoadingState.value = false
@@ -935,11 +965,13 @@ const addFolder = (payload: {
   displayModalAddFolder(true)
 }
 
-const onAddFolder = (folderName: string) => {
+const onAddFolder = async (folderName: string) => {
   const path = editingFolderPath.value
 
   if (collectionsType.value.type === "my-collections") {
     if (!path) return
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     addRESTFolder(folderName, path)
 
     platform.analytics?.logEvent({
@@ -1000,7 +1032,7 @@ const editCollection = (payload: {
   displayModalEditCollection(true)
 }
 
-const updateEditingCollection = (newName: string) => {
+const updateEditingCollection = async (newName: string) => {
   if (!editingCollection.value) return
 
   if (!newName) {
@@ -1009,6 +1041,8 @@ const updateEditingCollection = (newName: string) => {
   }
 
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     const collectionIndex = editingCollectionIndex.value
     if (collectionIndex === null) return
 
@@ -1043,6 +1077,46 @@ const updateEditingCollection = (newName: string) => {
   }
 }
 
+const createMockServer = (payload: {
+  collectionIndex: string
+  collection: HoppCollection
+}) => {
+  // Import the mock server store dynamically to avoid circular dependencies
+  import("~/newstore/mockServers").then(({ showCreateMockServerModal$ }) => {
+    let collectionID = payload.collection.id ?? payload.collection._ref_id
+
+    // If this is a child collection (folder), we need to get the root collection ID
+    if (payload.collectionIndex.includes("/")) {
+      // Extract the root collection index from the path (e.g., "0/1/2" -> "0")
+      const rootIndex = payload.collectionIndex.split("/")[0]
+      const rootCollection = myCollections.value[parseInt(rootIndex)]
+      if (rootCollection) {
+        collectionID = rootCollection.id ?? rootCollection._ref_id
+      }
+    }
+
+    showCreateMockServerModal$.next({
+      show: true,
+      collectionID: collectionID,
+      collectionName: payload.collection.name,
+    })
+  })
+}
+
+const createTeamMockServer = (payload: {
+  collectionID: string
+  collection: TeamCollection
+}) => {
+  // Import the mock server store dynamically to avoid circular dependencies
+  import("~/newstore/mockServers").then(({ showCreateMockServerModal$ }) => {
+    showCreateMockServerModal$.next({
+      show: true,
+      collectionID: payload.collectionID,
+      collectionName: payload.collection.title,
+    })
+  })
+}
+
 const editFolder = (payload: {
   folderPath: string | undefined
   folder: HoppCollection | TeamCollection
@@ -1058,10 +1132,12 @@ const editFolder = (payload: {
   displayModalEditFolder(true)
 }
 
-const updateEditingFolder = (newName: string) => {
+const updateEditingFolder = async (newName: string) => {
   if (!editingFolder.value) return
 
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     if (!editingFolderPath.value) return
 
     editRESTFolder(editingFolderPath.value, {
@@ -1104,6 +1180,8 @@ const duplicateCollection = async ({
   collectionSyncID?: string
 }) => {
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     duplicateRESTCollection(pathOrID, collectionSyncID)
   } else if (hasTeamWriteAccess.value) {
     duplicateCollectionLoading.value = true
@@ -1141,7 +1219,7 @@ const editRequest = (payload: {
   displayModalEditRequest(true)
 }
 
-const updateEditingRequest = (newName: string) => {
+const updateEditingRequest = async (newName: string) => {
   const request = editingRequest.value
   if (!request) return
 
@@ -1150,6 +1228,9 @@ const updateEditingRequest = (newName: string) => {
     name: newName || request.name,
   }
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
+
     const folderPath = editingFolderPath.value
     const requestIndex = editingRequestIndex.value
 
@@ -1295,6 +1376,9 @@ const updateEditingResponse = (newName: string) => {
       possibleExampleActiveTab.value.document.response.name = newName
 
       nextTick(() => {
+        if (possibleExampleActiveTab.value.document.type === "test-runner")
+          return
+
         possibleExampleActiveTab.value.document.isDirty = false
         possibleExampleActiveTab.value.document.saveContext = {
           originLocation: "user-collection",
@@ -1361,6 +1445,8 @@ const updateEditingResponse = (newName: string) => {
     ) {
       possibleActiveResponseTab.value.document.response.name = newName
       nextTick(() => {
+        if (possibleActiveResponseTab.value.document.type === "test-runner")
+          return
         possibleActiveResponseTab.value.document.isDirty = false
         possibleActiveResponseTab.value.document.saveContext = {
           originLocation: "team-collection",
@@ -1381,7 +1467,7 @@ const updateEditingResponse = (newName: string) => {
   }
 }
 
-const duplicateRequest = (payload: {
+const duplicateRequest = async (payload: {
   folderPath: string
   request: HoppRESTRequest
 }) => {
@@ -1394,6 +1480,8 @@ const duplicateRequest = (payload: {
   }
 
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     saveRESTRequestAs(folderPath, newRequest)
     toast.success(t("request.duplicated"))
   } else if (hasTeamWriteAccess.value) {
@@ -1424,7 +1512,7 @@ const duplicateRequest = (payload: {
   }
 }
 
-const duplicateResponse = (payload: ResponseConfigPayload) => {
+const duplicateResponse = async (payload: ResponseConfigPayload) => {
   const { folderPath, requestIndex, request, responseName } = payload
 
   const response = request.responses[responseName]
@@ -1453,6 +1541,8 @@ const duplicateResponse = (payload: ResponseConfigPayload) => {
   }
 
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     editRESTRequest(folderPath, parseInt(requestIndex), updatedRequest)
     toast.success(t("response.duplicated"))
 
@@ -1544,8 +1634,10 @@ const removeTeamCollectionOrFolder = async (collectionID: string) => {
   )()
 }
 
-const onRemoveCollection = () => {
+const onRemoveCollection = async () => {
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     const collectionIndex = editingCollectionIndex.value
 
     const collectionToRemove =
@@ -1625,8 +1717,10 @@ const removeFolder = (id: string) => {
   displayConfirmModal(true)
 }
 
-const onRemoveFolder = () => {
+const onRemoveFolder = async () => {
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     const folderPath = editingFolderPath.value
 
     if (!folderPath) return
@@ -1712,8 +1806,10 @@ const removeRequest = (payload: {
   displayConfirmModal(true)
 }
 
-const onRemoveRequest = () => {
+const onRemoveRequest = async () => {
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     const folderPath = editingFolderPath.value
     const requestIndex = editingRequestIndex.value
 
@@ -1825,7 +1921,7 @@ const removeResponse = (payload: ResponseConfigPayload) => {
   displayConfirmModal(true)
 }
 
-const onRemoveResponse = () => {
+const onRemoveResponse = async () => {
   const request = cloneDeep(editingRequest.value)
 
   if (!request) return
@@ -1840,6 +1936,8 @@ const onRemoveResponse = () => {
   }
 
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     const folderPath = editingFolderPath.value
     const requestIndex = editingRequestIndex.value
 
@@ -2001,7 +2099,7 @@ const selectRequest = (selectedRequest: {
         cascadeParentCollectionForPropertiesForSearchResults(collectionID)
     } else {
       inheritedProperties =
-        teamCollectionAdapter.cascadeParentCollectionForProperties(folderPath)
+        teamCollectionService.cascadeParentCollectionForProperties(folderPath)
     }
 
     const possibleTab = tabs.getTabRefWithSaveContext({
@@ -2021,6 +2119,7 @@ const selectRequest = (selectedRequest: {
           requestID: requestIndex,
           collectionID: folderPath,
           exampleID: undefined,
+          requestRefID: request.id,
         },
         inheritedProperties: inheritedProperties,
       })
@@ -2030,7 +2129,9 @@ const selectRequest = (selectedRequest: {
       originLocation: "user-collection",
       requestIndex: parseInt(requestIndex),
       folderPath: folderPath!,
+      requestRefID: request._ref_id ?? request.id,
     })
+
     if (possibleTab) {
       tabs.setActiveTab(possibleTab.value.id)
     } else {
@@ -2043,6 +2144,7 @@ const selectRequest = (selectedRequest: {
           originLocation: "user-collection",
           folderPath: folderPath!,
           requestIndex: parseInt(requestIndex),
+          requestRefID: request._ref_id ?? request.id,
         },
         inheritedProperties: cascadeParentCollectionForProperties(
           folderPath,
@@ -2119,7 +2221,7 @@ const selectResponse = (payload: {
           exampleID: responseID,
         },
         inheritedProperties:
-          teamCollectionAdapter.cascadeParentCollectionForProperties(
+          teamCollectionService.cascadeParentCollectionForProperties(
             folderPath
           ),
       })
@@ -2141,22 +2243,33 @@ const pathToLastIndex = (path: string) => {
  * This function is called when the user drops the request inside a collection
  * @param payload Object that contains the folder path, request index and the destination collection index
  */
-const dropRequest = (payload: {
+const dropRequest = async (payload: {
   folderPath?: string | undefined
   requestIndex: string
   destinationCollectionIndex: string
+  destinationParentPath?: string
+  requestRefID?: string
 }) => {
-  const { folderPath, requestIndex, destinationCollectionIndex } = payload
+  const {
+    folderPath,
+    requestIndex,
+    destinationCollectionIndex,
+    destinationParentPath,
+    requestRefID,
+  } = payload
 
   if (!requestIndex || !destinationCollectionIndex || !folderPath) return
 
   let possibleTab = null
 
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     possibleTab = tabs.getTabRefWithSaveContext({
       originLocation: "user-collection",
       folderPath,
       requestIndex: pathToLastIndex(requestIndex),
+      requestRefID,
     })
 
     // If there is a tab attached to this request, change save its save context
@@ -2168,6 +2281,7 @@ const dropRequest = (payload: {
           myCollections.value,
           destinationCollectionIndex
         ).length,
+        requestRefID: possibleTab.value.document.request._ref_id,
       }
 
       possibleTab.value.document.inheritedProperties =
@@ -2219,10 +2333,11 @@ const dropRequest = (payload: {
             possibleTab.value.document.saveContext = {
               originLocation: "team-collection",
               requestID: requestIndex,
+              collectionID: destinationParentPath ?? destinationCollectionIndex,
             }
             possibleTab.value.document.inheritedProperties =
-              teamCollectionAdapter.cascadeParentCollectionForProperties(
-                destinationCollectionIndex
+              teamCollectionService.cascadeParentCollectionForProperties(
+                destinationParentPath ?? destinationCollectionIndex
               )
           }
           toast.success(`${t("request.moved")}`)
@@ -2293,7 +2408,7 @@ const isMoveToSameLocation = (
  * to a different collection or folder
  * @param payload - object containing the collection index dragged and the destination collection index
  */
-const dropCollection = (payload: {
+const dropCollection = async (payload: {
   collectionIndexDragged: string
   destinationCollectionIndex: string
   destinationParentPath?: string
@@ -2309,6 +2424,8 @@ const dropCollection = (payload: {
   if (collectionIndexDragged === destinationCollectionIndex) return
 
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     if (
       checkIfCollectionIsAParentOfTheChildren(
         collectionIndexDragged,
@@ -2353,16 +2470,7 @@ const dropCollection = (payload: {
       newCollectionPath
     )
 
-    const inheritedProperty = cascadeParentCollectionForProperties(
-      newCollectionPath,
-      "rest"
-    )
-
-    updateInheritedPropertiesForAffectedRequests(
-      newCollectionPath,
-      inheritedProperty,
-      "rest"
-    )
+    updateInheritedPropertiesForAffectedRequests(newCollectionPath, "rest")
 
     draggingToRoot.value = false
     toast.success(`${t("collection.moved")}`)
@@ -2390,22 +2498,16 @@ const dropCollection = (payload: {
             1
           )
 
-          if (destinationParentPath && currentParentIndex) {
+          if (destinationParentPath) {
             updateSaveContextForAffectedRequests(
-              currentParentIndex,
-              `${destinationParentPath}`
-            )
-          }
-
-          const inheritedProperty =
-            teamCollectionAdapter.cascadeParentCollectionForProperties(
+              currentParentIndex || collectionIndexDragged,
               `${destinationParentPath}/${collectionIndexDragged}`
             )
+          }
 
           setTimeout(() => {
             updateInheritedPropertiesForAffectedRequests(
               `${destinationParentPath}/${collectionIndexDragged}`,
-              inheritedProperty,
               "rest"
             )
           }, 300)
@@ -2417,10 +2519,13 @@ const dropCollection = (payload: {
 
 /**
  * Checks if the collection is already in the root
- * @param id - path of the collection
+ * @param id - path of the collection, null if it's in the root
  * @returns boolean - true if the collection is already in the root
  */
-const isAlreadyInRoot = (id: string) => {
+const isAlreadyInRoot = (id: string | null) => {
+  // If there is no id, it means the collection is in the root
+  if (!id) return true
+
   const indexPath = pathToIndex(id)
   return indexPath.length === 1
 }
@@ -2430,11 +2535,14 @@ const isAlreadyInRoot = (id: string) => {
  * to the root
  * @param payload - object containing the collection index dragged
  */
-const dropToRoot = ({ dataTransfer }: DragEvent) => {
+const dropToRoot = async ({ dataTransfer }: DragEvent) => {
   if (dataTransfer) {
     const collectionIndexDragged = dataTransfer.getData("collectionIndex")
+    const parentIndex = dataTransfer.getData("parentIndex")
     if (!collectionIndexDragged) return
     if (collectionsType.value.type === "my-collections") {
+      const isValidToken = await handleTokenValidation()
+      if (!isValidToken) return
       // check if the collection is already in the root
       if (isAlreadyInRoot(collectionIndexDragged)) {
         toast.error(`${t("collection.invalid_root_move")}`)
@@ -2449,14 +2557,8 @@ const dropToRoot = ({ dataTransfer }: DragEvent) => {
           `${rootLength - 1}`
         )
 
-        const inheritedProperty = cascadeParentCollectionForProperties(
-          `${rootLength - 1}`,
-          "rest"
-        )
-
         updateInheritedPropertiesForAffectedRequests(
           `${rootLength - 1}`,
-          inheritedProperty,
           "rest"
         )
       }
@@ -2483,6 +2585,16 @@ const dropToRoot = ({ dataTransfer }: DragEvent) => {
               collectionMoveLoading.value.indexOf(collectionIndexDragged),
               1
             )
+            if (collectionIndexDragged && parentIndex) {
+              updateSaveContextForAffectedRequests(parentIndex, null)
+            }
+
+            setTimeout(() => {
+              updateInheritedPropertiesForAffectedRequests(
+                `${collectionIndexDragged}`,
+                "rest"
+              )
+            }, 300)
             toast.success(`${t("collection.moved")}`)
           }
         )
@@ -2545,7 +2657,7 @@ const isSameSameParent = (
  * @param payload - object containing the request index dragged and the destination request index
  *  with the destination collection index
  */
-const updateRequestOrder = (payload: {
+const updateRequestOrder = async (payload: {
   dragedRequestIndex: string
   destinationRequestIndex: string | null
   destinationCollectionIndex: string
@@ -2561,6 +2673,8 @@ const updateRequestOrder = (payload: {
   if (dragedRequestIndex === destinationRequestIndex) return
 
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     if (
       !isSameSameParent(
         dragedRequestIndex,
@@ -2616,7 +2730,7 @@ const updateRequestOrder = (payload: {
  * This function is called when the user updates the collection or folder order
  * @param payload - object containing the collection index dragged and the destination collection index
  */
-const updateCollectionOrder = (payload: {
+const updateCollectionOrder = async (payload: {
   dragedCollectionIndex: string
   destinationCollection: {
     destinationCollectionIndex: string | null
@@ -2630,6 +2744,8 @@ const updateCollectionOrder = (payload: {
   if (dragedCollectionIndex === destinationCollectionIndex) return
 
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     if (
       !isSameSameParent(
         dragedCollectionIndex,
@@ -2715,9 +2831,12 @@ const exportData = async (collection: HoppCollection | TeamCollection) => {
   if (collectionsType.value.type === "my-collections") {
     const collectionJSON = JSON.stringify(collection, null, 2)
 
+    // Strip `export {};\n` from `testScript` and `preRequestScript` fields
+    const cleanedCollectionJSON = collectionJSON.replace(/export \{\};\\n/g, "")
+
     const name = (collection as HoppCollection).name
 
-    initializeDownloadCollection(collectionJSON, name)
+    initializeDownloadCollection(cleanedCollectionJSON, name)
   } else {
     if (!collection.id) return
     exportLoading.value = true
@@ -2734,8 +2853,14 @@ const exportData = async (collection: HoppCollection | TeamCollection) => {
           const hoppColl = teamCollToHoppRESTColl(coll)
           const collectionJSONString = JSON.stringify(hoppColl, null, 2)
 
+          // Strip `export {};\n` from `testScript` and `preRequestScript` fields
+          const cleanedCollectionJSON = collectionJSONString.replace(
+            /export \{\};\\n/g,
+            ""
+          )
+
           await initializeDownloadCollection(
-            collectionJSONString,
+            cleanedCollectionJSON,
             hoppColl.name
           )
           exportLoading.value = false
@@ -2781,7 +2906,7 @@ const getCurrentValue = (
   )?.currentValue
 }
 
-const editProperties = (payload: {
+const editProperties = async (payload: {
   collectionIndex: string
   collection: HoppCollection | TeamCollection
 }) => {
@@ -2790,6 +2915,8 @@ const editProperties = (payload: {
   const collectionId = collection.id ?? collectionIndex.split("/").pop()
 
   if (collectionsType.value.type === "my-collections") {
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
     const parentIndex = collectionIndex.split("/").slice(0, -1).join("/") // remove last folder to get parent folder
 
     let inheritedProperties: HoppInheritedProperty = {
@@ -2859,7 +2986,7 @@ const editProperties = (payload: {
 
     if (parentIndex) {
       const { auth, headers, variables } =
-        teamCollectionAdapter.cascadeParentCollectionForProperties(parentIndex)
+        teamCollectionService.cascadeParentCollectionForProperties(parentIndex)
 
       inheritedProperties = {
         auth,
@@ -2978,15 +3105,8 @@ const setCollectionProperties = (newCollection: {
       editRESTFolder(path, collection)
     }
 
-    const inheritedProperty = cascadeParentCollectionForProperties(path, "rest")
-
     nextTick(() => {
-      updateInheritedPropertiesForAffectedRequests(
-        path,
-        inheritedProperty,
-        "rest",
-        collection._ref_id ?? collectionId!
-      )
+      updateInheritedPropertiesForAffectedRequests(path, "rest")
     })
     toast.success(t("collection.properties_updated"))
   } else if (hasTeamWriteAccess.value && collectionId) {
@@ -2995,6 +3115,14 @@ const setCollectionProperties = (newCollection: {
       headers: collection.headers,
       variables: collection.variables,
     }
+
+    // Mark as loading BEFORE triggering async update to avoid race conditions and push the collectionId to the loading array
+    if (
+      !teamCollectionService.loadingCollections.value.includes(collectionId)
+    ) {
+      teamCollectionService.loadingCollections.value.push(collectionId)
+    }
+
     pipe(
       updateTeamCollection(collectionId, JSON.stringify(data), undefined),
       TE.match(
@@ -3003,22 +3131,12 @@ const setCollectionProperties = (newCollection: {
         },
         () => {
           toast.success(t("collection.properties_updated"))
+
+          // The team collection service needs to know the path of the collection that was updated
+          teamCollectionService.pendingTeamCollectionPath.value = path
         }
       )
     )()
-
-    //This is a hack to update the inherited properties of the requests if there an tab opened
-    // since it takes a little bit of time to update the collection tree
-    setTimeout(() => {
-      const inheritedProperty =
-        teamCollectionAdapter.cascadeParentCollectionForProperties(path)
-      updateInheritedPropertiesForAffectedRequests(
-        path,
-        inheritedProperty,
-        "rest",
-        collectionId
-      )
-    }, 300)
   }
 
   displayModalEditProperties(false)
@@ -3031,7 +3149,7 @@ const runCollectionHandler = (
 ) => {
   if (payload.path && collectionsType.value.type === "team-collections") {
     const inheritedProperties =
-      teamCollectionAdapter.cascadeParentCollectionForProperties(payload.path)
+      teamCollectionService.cascadeParentCollectionForProperties(payload.path)
 
     if (inheritedProperties) {
       collectionRunnerData.value = {
@@ -3047,6 +3165,51 @@ const runCollectionHandler = (
     }
   }
   showCollectionsRunnerModal.value = true
+}
+
+const sortCollections = (payload: {
+  collectionID: string | null
+  sortOrder: "asc" | "desc"
+  collectionRefID: string
+}) => {
+  const { collectionID, sortOrder, collectionRefID } = payload
+
+  if (collectionsType.value.type === "my-collections") {
+    const collectionIndex = collectionID ? parseInt(collectionID) : null
+
+    if (isAlreadyInRoot(collectionID)) {
+      sortRESTCollection(collectionIndex, sortOrder)
+      toast.success(t("collection.sorted"))
+    } else {
+      if (!collectionID) return
+
+      sortRESTFolder(collectionID, sortOrder)
+      toast.success(t("folder.sorted"))
+    }
+  } else if (hasTeamWriteAccess.value) {
+    pipe(
+      sortTeamCollections(
+        collectionsType.value.selectedTeam.teamID,
+        collectionID,
+        sortOrder === "asc" ? SortOptions.TitleAsc : SortOptions.TitleDesc
+      ),
+      TE.match(
+        (err: GQLError<string>) => {
+          toast.error(`${getErrorMessage(err)}`)
+        },
+        () => {
+          toast.success(t("collection.sorted"))
+        }
+      )
+    )()
+  }
+
+  // Set the sort option in the service to persist the sort option
+  // when the user navigates away and comes back
+  currentSortValuesService.setSortOption(collectionRefID, {
+    sortBy: "name",
+    sortOrder,
+  })
 }
 
 const resolveConfirmModal = (title: string | null) => {

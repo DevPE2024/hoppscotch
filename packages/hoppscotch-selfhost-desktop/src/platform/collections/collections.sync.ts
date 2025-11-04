@@ -15,9 +15,8 @@ import {
   HoppRESTRequest,
 } from "@hoppscotch/data"
 
-import { getSyncInitFunction } from "../../lib/sync"
+import { getSyncInitFunction, type StoreSyncDefinitionOf } from "../../lib/sync"
 
-import { StoreSyncDefinitionOf } from "../../lib/sync"
 import { createMapper } from "../../lib/sync/mapper"
 import {
   createRESTChildUserCollection,
@@ -29,12 +28,12 @@ import {
   importUserCollectionsFromJSON,
   moveUserCollection,
   moveUserRequest,
-  renameUserCollection,
+  sortUserCollections,
   updateUserCollection,
   updateUserCollectionOrder,
 } from "./collections.api"
 
-import { ReqType } from "../../api/generated/graphql"
+import { ReqType, SortOptions } from "../../api/generated/graphql"
 
 import * as E from "fp-ts/Either"
 
@@ -144,13 +143,11 @@ const recursivelySyncCollections = async (
   // create the requests
   if (parentCollectionID) {
     collection.requests.forEach(async (request) => {
-      const res =
-        parentCollectionID &&
-        (await createRESTUserRequest(
-          request.name,
-          JSON.stringify(request),
-          parentCollectionID
-        ))
+      const res = await createRESTUserRequest(
+        request.name,
+        JSON.stringify(request),
+        parentCollectionID
+      )
 
       if (res && E.isRight(res)) {
         const requestId = res.right.createRESTUserRequest.id
@@ -261,6 +258,34 @@ export const storeSyncDefinition: StoreSyncDefinitionOf<
 
     if (collectionID) {
       updateUserCollection(collectionID, collection.name, JSON.stringify(data))
+    }
+  },
+  sortRESTCollection({ collectionPath, sortOrder }) {
+    // If collectionPath is empty, it means we're sorting the whole root collections else we're sorting a specific collection
+    const collectionID =
+      collectionPath !== null && collectionPath !== undefined
+        ? navigateToFolderWithIndexPath(restCollectionStore.value.state, [
+            collectionPath,
+          ])?.id
+        : null
+
+    const order =
+      sortOrder === "asc" ? SortOptions.TitleAsc : SortOptions.TitleDesc
+
+    sortUserCollections(collectionID ?? null, order)
+  },
+
+  sortRESTFolder({ path, sortOrder }) {
+    const collectionID = navigateToFolderWithIndexPath(
+      restCollectionStore.value.state,
+      path.split("/").map((index) => parseInt(index))
+    )?.id
+
+    if (collectionID) {
+      const order =
+        sortOrder === "asc" ? SortOptions.TitleAsc : SortOptions.TitleDesc
+
+      sortUserCollections(collectionID, order)
     }
   },
   async addFolder({ name, path }) {

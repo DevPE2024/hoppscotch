@@ -8,6 +8,7 @@ import {
   parseTemplateStringE,
   generateJWTToken,
   HoppCollectionVariable,
+  calculateHawkHeader
 } from "@hoppscotch/data";
 import { runPreRequestScript } from "@hoppscotch/js-sandbox/node";
 import * as A from "fp-ts/Array";
@@ -34,8 +35,6 @@ import {
   generateDigestAuthHeader,
 } from "./auth/digest";
 
-import { calculateHawkHeader } from "@hoppscotch/data";
-
 /**
  * Runs pre-request-script runner over given request which extracts set ENVs and
  * applies them on current request to generate updated request.
@@ -58,21 +57,50 @@ export const preRequestScriptRunner = (
   return pipe(
     TE.of(request),
     TE.chain(({ preRequestScript }) =>
-      runPreRequestScript(preRequestScript, envs, experimentalScriptingSandbox)
+      runPreRequestScript(preRequestScript, {
+        envs,
+        experimentalScriptingSandbox,
+        request,
+        cookies: null,
+      })
     ),
-    TE.map(
-      ({ selected, global }) =>
-        <Environment>{
+    TE.map(({ updatedEnvs, updatedRequest }) => {
+      const { selected, global } = updatedEnvs;
+
+      return {
+        // Keep the original updatedEnvs with separate global and selected arrays
+        preRequestUpdatedEnvs: updatedEnvs,
+        // Create Environment format for getEffectiveRESTRequest
+        envForEffectiveRequest: <Environment>{
           name: "Env",
           variables: [...(selected ?? []), ...(global ?? [])],
-        }
-    ),
-    TE.chainW((env) =>
-      TE.tryCatch(
-        () => getEffectiveRESTRequest(request, env, collectionVariables),
+        },
+        updatedRequest: updatedRequest ?? {},
+      };
+    }),
+    TE.chainW(({ preRequestUpdatedEnvs, envForEffectiveRequest, updatedRequest }) => {
+      const finalRequest = { ...request, ...updatedRequest };
+
+      return TE.tryCatch(
+        async () => {
+          const result = await getEffectiveRESTRequest(
+            finalRequest,
+            envForEffectiveRequest,
+            collectionVariables
+          );
+          // Replace the updatedEnvs from getEffectiveRESTRequest with the one from pre-request script
+          // This preserves the global/selected separation
+          if (E.isRight(result)) {
+            return E.right({
+              ...result.right,
+              updatedEnvs: preRequestUpdatedEnvs,
+            });
+          }
+          return result;
+        },
         (reason) => error({ code: "PRE_REQUEST_SCRIPT_ERROR", data: reason })
-      )
-    ),
+      );
+    }),
     TE.chainEitherKW((effectiveRequest) => effectiveRequest),
     TE.mapLeft((reason) =>
       isHoppCLIError(reason)
@@ -515,7 +543,7 @@ function getFinalBodyFromRequest(
       // we split array blobs into separate entries (FormData will then join them together during exec)
       arrayFlatMap((x) =>
         x.isFile
-          ? x.value.map((v) => ({
+          ? (x.value as (Blob | null)[]).map((v: Blob | null) => ({
               key: parseTemplateString(x.key, resolvedVariables),
               value: v as string | Blob,
               contentType: x.contentType,

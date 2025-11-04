@@ -1,6 +1,8 @@
 import {
+  Cookie,
   Environment,
   HoppCollectionVariable,
+  HoppRESTHeader,
   HoppRESTHeaders,
   HoppRESTRequest,
   HoppRESTRequestVariable,
@@ -22,7 +24,8 @@ import { Ref } from "vue"
 
 import { map } from "fp-ts/Either"
 
-import { runTestScript } from "@hoppscotch/js-sandbox/web"
+import { runPreRequestScript, runTestScript } from "@hoppscotch/js-sandbox/web"
+import { useSetting } from "~/composables/settings"
 import { getService } from "~/modules/dioc"
 import {
   environmentsStore,
@@ -32,6 +35,12 @@ import {
   setGlobalEnvVariables,
   updateEnvironment,
 } from "~/newstore/environments"
+import { platform } from "~/platform"
+import { CookieJarService } from "~/services/cookie-jar.service"
+import {
+  CurrentValueService,
+  Variable,
+} from "~/services/current-environment-value.service"
 import {
   SecretEnvironmentService,
   SecretVariable,
@@ -39,27 +48,22 @@ import {
 import { HoppTab } from "~/services/tab"
 import { updateTeamEnvironment } from "./backend/mutations/TeamEnvironment"
 import { createRESTNetworkRequestStream } from "./network"
-import { getFinalEnvsFromPreRequest } from "./preRequest"
 import { HoppRequestDocument } from "./rest/document"
 import {
   getTemporaryVariables,
   setTemporaryVariables,
 } from "./runner/temp_envs"
-import {
-  CurrentValueService,
-  Variable,
-} from "~/services/current-environment-value.service"
 import { HoppRESTResponse } from "./types/HoppRESTResponse"
 import { HoppTestData, HoppTestResult } from "./types/HoppTestResult"
 import { getEffectiveRESTRequest } from "./utils/EffectiveURL"
-import { isJSONContentType } from "./utils/contenttypes"
 import { getCombinedEnvVariables } from "./utils/environments"
-import { useSetting } from "~/composables/settings"
 import {
   OutgoingSandboxPostRequestWorkerMessage,
   OutgoingSandboxPreRequestWorkerMessage,
 } from "./workers/sandbox.worker"
 import { transformInheritedCollectionVariablesToAggregateEnv } from "./utils/inheritedCollectionVarTransformer"
+import { isJSONContentType } from "./utils/contenttypes"
+import { applyScriptRequestUpdates } from "./experimental-sandbox-integration"
 
 const sandboxWorker = new Worker(
   new URL("./workers/sandbox.worker.ts", import.meta.url),
@@ -70,6 +74,7 @@ const sandboxWorker = new Worker(
 
 const secretEnvironmentService = getService(SecretEnvironmentService)
 const currentEnvironmentValueService = getService(CurrentValueService)
+const cookieJarService = getService(CookieJarService)
 
 const EXPERIMENTAL_SCRIPTING_SANDBOX = useSetting(
   "EXPERIMENTAL_SCRIPTING_SANDBOX"
@@ -79,7 +84,7 @@ export const getTestableBody = (
   res: HoppRESTResponse & { type: "success" | "fail" }
 ) => {
   const contentTypeHeader = res.headers.find(
-    (h) => h.key.toLowerCase() === "content-type"
+    (h: HoppRESTHeader) => h.key.toLowerCase() === "content-type"
   )
 
   const rawBody = new TextDecoder("utf-8")
@@ -163,15 +168,15 @@ const updateEnvironments = (
           key: e.key,
           value: e.currentValue ?? "",
           varIndex: index,
+          initialValue: e.initialValue ?? "",
         })
 
-        // delete the value from the environment
-        // so that it doesn't get saved in the environment
-
+        // create a new object with cleared values for secret variables
+        // so that these values don't get saved in the environment
         return {
           key: e.key,
           secret: e.secret,
-          initialValue: e.initialValue ?? "",
+          initialValue: e.secret ? "" : (e.initialValue ?? ""),
           currentValue: "",
         }
       }
@@ -207,23 +212,35 @@ const updateEnvironments = (
 }
 
 /**
+ * Get the environment variable value from the secret environment service
+ * @param envID The environment ID
+ * @param index The index of the environment variable
+ * @returns Current value and initial value of the environment variable
+ */
+const getSecretEnvironmentVariableValue = (
+  envID: string,
+  index: number
+): {
+  value: string
+  initialValue?: string
+} | null => {
+  return secretEnvironmentService.getSecretEnvironmentVariableValue(
+    envID,
+    index
+  )
+}
+
+/**
  * Get the environment variable value from the current environment
  * @param envID The environment ID
  * @param index The index of the environment variable
  * @param isSecret Whether the environment variable is a secret
- * @returns The environment variable value
+ * @returns Current value of the environment variable
  */
 const getEnvironmentVariableValue = (
   envID: string,
-  index: number,
-  isSecret: boolean
+  index: number
 ): string | undefined => {
-  if (isSecret) {
-    return secretEnvironmentService.getSecretEnvironmentVariableValue(
-      envID,
-      index
-    )
-  }
   return currentEnvironmentValueService.getEnvironmentVariableValue(
     envID,
     index
@@ -277,16 +294,22 @@ const filterNonEmptyEnvironmentVariables = (
   return Array.from(envsMap.values())
 }
 
-const runPreRequestScript = (
-  script: string,
+const delegatePreRequestScriptRunner = (
+  request: HoppRESTRequest,
   envs: {
     global: Environment["variables"]
     selected: Environment["variables"]
     temp: Environment["variables"]
-  }
+  },
+  cookies: Cookie[] | null
 ): Promise<E.Either<string, SandboxPreRequestResult>> => {
+  const { preRequestScript } = request
+
   if (!EXPERIMENTAL_SCRIPTING_SANDBOX.value) {
-    return getFinalEnvsFromPreRequest(script, envs, false)
+    return runPreRequestScript(preRequestScript, {
+      envs,
+      experimentalScriptingSandbox: false,
+    })
   }
 
   return new Promise((resolve) => {
@@ -313,19 +336,27 @@ const runPreRequestScript = (
 
     sandboxWorker.postMessage({
       type: "pre",
-      script,
       envs,
+      request: JSON.stringify(request),
+      cookies: cookies ? JSON.stringify(cookies) : null,
     })
   })
 }
 
 const runPostRequestScript = (
-  script: string,
   envs: TestResult["envs"],
-  response: HoppRESTResponse
+  request: HoppRESTRequest,
+  response: HoppRESTResponse,
+  cookies: Cookie[] | null
 ): Promise<E.Either<string, SandboxTestResult>> => {
+  const { testScript } = request
+
   if (!EXPERIMENTAL_SCRIPTING_SANDBOX.value) {
-    return runTestScript(script, envs, response, false)
+    return runTestScript(testScript, {
+      envs,
+      response,
+      experimentalScriptingSandbox: false,
+    })
   }
 
   return new Promise((resolve) => {
@@ -352,9 +383,10 @@ const runPostRequestScript = (
 
     sandboxWorker.postMessage({
       type: "post",
-      script,
       envs,
+      request: JSON.stringify(request),
       response,
+      cookies: cookies ? JSON.stringify(cookies) : null,
     })
   })
 }
@@ -376,40 +408,40 @@ export function runRESTRequest$(
     cancelFunc?.()
   }
 
-  const res = runPreRequestScript(
-    tab.value.document.request.preRequestScript,
-    getCombinedEnvVariables()
+  const cookieJarEntries = getCookieJarEntries()
+
+  const { request, inheritedProperties } = tab.value.document
+
+  const requestAuth =
+    request.auth.authType === "inherit" && request.auth.authActive
+      ? inheritedProperties?.auth.inheritedAuth
+      : request.auth
+
+  const inheritedHeaders = inheritedProperties?.headers
+    ?.filter((header) => header.inheritedHeader)
+    .map((header) => header.inheritedHeader!)
+
+  const requestHeaders: HoppRESTHeaders = [
+    ...(inheritedHeaders ?? []),
+    ...request.headers,
+  ]
+
+  const resolvedRequest = {
+    ...tab.value.document.request,
+    auth: requestAuth ?? { authType: "none", authActive: false },
+    headers: requestHeaders,
+  }
+
+  const res = delegatePreRequestScriptRunner(
+    resolvedRequest,
+    getCombinedEnvVariables(),
+    cookieJarEntries
   ).then(async (preRequestScriptResult) => {
     if (cancelCalled) return E.left("cancellation" as const)
 
     if (E.isLeft(preRequestScriptResult)) {
       console.error(preRequestScriptResult.left)
       return E.left("script_fail" as const)
-    }
-
-    const requestAuth =
-      tab.value.document.request.auth.authType === "inherit" &&
-      tab.value.document.request.auth.authActive
-        ? tab.value.document.inheritedProperties?.auth.inheritedAuth
-        : tab.value.document.request.auth
-
-    let requestHeaders
-
-    const inheritedHeaders =
-      tab.value.document.inheritedProperties?.headers.map((header) => {
-        if (header.inheritedHeader) {
-          return header.inheritedHeader
-        }
-        return []
-      })
-
-    if (inheritedHeaders) {
-      requestHeaders = [
-        ...inheritedHeaders,
-        ...tab.value.document.request.headers,
-      ]
-    } else {
-      requestHeaders = [...tab.value.document.request.headers]
     }
 
     const finalRequestVariables =
@@ -437,14 +469,16 @@ export function runRESTRequest$(
         secret,
       }))
 
-    const finalRequest = {
-      ...tab.value.document.request,
-      auth: requestAuth ?? { authType: "none", authActive: false },
-      headers: requestHeaders as HoppRESTHeaders,
-    }
+    const finalRequest = applyScriptRequestUpdates(
+      resolvedRequest,
+      preRequestScriptResult.right.updatedRequest
+    )
+
+    // Propagate changes to request variables from the scripting context to the UI
+    tab.value.document.request.requestVariables = finalRequest.requestVariables
 
     const finalEnvs = {
-      environments: preRequestScriptResult.right.envs,
+      environments: preRequestScriptResult.right.updatedEnvs,
       requestVariables: finalRequestVariables as Environment["variables"],
       collectionVariables,
     }
@@ -471,13 +505,16 @@ export function runRESTRequest$(
           executedResponses$.next(res)
 
           const postRequestScriptResult = await runPostRequestScript(
-            res.req.testScript,
-            preRequestScriptResult.right.envs,
+            preRequestScriptResult.right.updatedEnvs,
+            res.req,
             {
               status: res.statusCode,
               body: getTestableBody(res),
               headers: res.headers,
-            }
+              statusText: res.statusText,
+              responseTime: res.meta.responseDuration,
+            },
+            preRequestScriptResult.right.updatedCookies ?? null
           )
 
           if (E.isRight(postRequestScriptResult)) {
@@ -500,6 +537,24 @@ export function runRESTRequest$(
               combinedResult.right
             )
             updateEnvsAfterTestScript(combinedResult)
+
+            const updatedCookies = postRequestScriptResult.right.updatedCookies
+
+            if (updatedCookies) {
+              const newCookieMap = new Map<string, Cookie[]>()
+
+              for (const cookie of updatedCookies) {
+                const domain = cookie.domain
+
+                if (!newCookieMap.has(domain)) {
+                  newCookieMap.set(domain, [])
+                }
+
+                newCookieMap.get(domain)!.push(cookie)
+              }
+
+              cookieJarService.cookieJar.value = newCookieMap
+            }
           } else {
             tab.value.document.testResults = {
               description: "",
@@ -575,6 +630,19 @@ function updateEnvsAfterTestScript(runResult: E.Right<SandboxTestResult>) {
   }
 }
 
+const getCookieJarEntries = () => {
+  // Exclusive to the Desktop App
+  if (!platform.platformFeatureFlags.cookiesEnabled) {
+    return null
+  }
+
+  const cookieJarEntries = Array.from(
+    cookieJarService.cookieJar.value.values()
+  ).flatMap((cookies) => cookies)
+
+  return cookieJarEntries
+}
+
 /**
  * Run the test runner request
  * @param request The request to run
@@ -591,12 +659,16 @@ export function runTestRunnerRequest(
   | E.Right<{
       response: HoppRESTResponse
       testResult: HoppTestResult
+      updatedRequest: HoppRESTRequest
     }>
   | undefined
 > {
-  return runPreRequestScript(
-    request.preRequestScript,
-    getCombinedEnvVariables()
+  const cookieJarEntries = getCookieJarEntries()
+
+  return delegatePreRequestScriptRunner(
+    request,
+    getCombinedEnvVariables(),
+    cookieJarEntries
   ).then(async (preRequestScriptResult) => {
     if (E.isLeft(preRequestScriptResult)) {
       console.error(preRequestScriptResult.left)
@@ -614,14 +686,20 @@ export function runTestRunnerRequest(
       }))
     )
 
-    const effectiveRequest = await getEffectiveRESTRequest(request, {
+    // Calculate the final updated request after pre-request script changes
+    const finalRequest = applyScriptRequestUpdates(
+      request,
+      preRequestScriptResult.right.updatedRequest
+    )
+
+    const effectiveRequest = await getEffectiveRESTRequest(finalRequest, {
       id: "env-id",
       v: 2,
       name: "Env",
       variables: filterNonEmptyEnvironmentVariables(
         combineEnvVariables({
           environments: {
-            ...preRequestScriptResult.right.envs,
+            ...preRequestScriptResult.right.updatedEnvs,
             temp: !persistEnv ? getTemporaryVariables() : [],
           },
           requestVariables: finalRequestVariables,
@@ -640,13 +718,16 @@ export function runTestRunnerRequest(
           executedResponses$.next(res)
 
           const postRequestScriptResult = await runPostRequestScript(
-            res.req.testScript,
-            preRequestScriptResult.right.envs,
+            preRequestScriptResult.right.updatedEnvs,
+            res.req,
             {
               status: res.statusCode,
               body: getTestableBody(res),
               headers: res.headers,
-            }
+              statusText: res.statusText,
+              responseTime: res.meta.responseDuration,
+            },
+            preRequestScriptResult.right.updatedCookies ?? null
           )
 
           if (E.isRight(postRequestScriptResult)) {
@@ -678,6 +759,7 @@ export function runTestRunnerRequest(
             return E.right({
               response: res,
               testResult: sandboxTestResult,
+              updatedRequest: finalRequest,
             })
           }
           const sandboxTestResult = {
@@ -702,6 +784,7 @@ export function runTestRunnerRequest(
           return E.right({
             response: res,
             testResult: sandboxTestResult,
+            updatedRequest: finalRequest,
           })
         }
       })
@@ -753,6 +836,27 @@ const getUpdatedEnvVariables = (
     )
   )
 
+// Helper to resolve currentValue & initialValue for (secret/non-secret) env vars
+const resolveEnvVars = (
+  envID: string,
+  vars: Environment["variables"]
+): Environment["variables"] =>
+  vars.map((v, index) => {
+    const secretMeta = v.secret
+      ? getSecretEnvironmentVariableValue(envID, index)
+      : null
+    return {
+      ...v,
+      currentValue:
+        (v.secret
+          ? secretMeta?.value
+          : getEnvironmentVariableValue(envID, index)) ?? "",
+      // fallback to var initialValue if secretMeta is not found
+      initialValue:
+        (v.secret ? secretMeta?.initialValue : "") ?? v.initialValue,
+    }
+  })
+
 function translateToSandboxTestResults(
   testDesc: SandboxTestResult
 ): HoppTestResult {
@@ -764,20 +868,10 @@ function translateToSandboxTestResults(
     }
   }
 
-  const globals = cloneDeep(getGlobalVariables()).map((g, index) => ({
-    ...g,
-    currentValue: getEnvironmentVariableValue("Global", index, g.secret) ?? "",
-  }))
-
-  const envVars = getCurrentEnvironment().variables.map((e, index) => ({
-    ...e,
-    currentValue:
-      getEnvironmentVariableValue(
-        getCurrentEnvironment().id,
-        index,
-        e.secret
-      ) ?? "",
-  }))
+  const globals = resolveEnvVars("Global", cloneDeep(getGlobalVariables()))
+  const { id: currentEnvID, variables: currentEnvVariables } =
+    getCurrentEnvironment()
+  const envVars = resolveEnvVars(currentEnvID, currentEnvVariables)
 
   return {
     description: "",

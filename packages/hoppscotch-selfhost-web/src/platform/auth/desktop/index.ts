@@ -526,4 +526,35 @@ export const def: AuthPlatformDef = {
       event: "logout",
     })
   },
+
+  async refreshAuthToken() {
+    const refreshed = await refreshToken()
+    return refreshed ?? false
+  },
+
+  /**
+   * Verifies if the current user's authentication tokens are valid
+   * @returns True if tokens are valid, false otherwise
+   */
+  async verifyAuthTokens() {
+    const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL
+
+    const { response } = interceptorService.execute({
+      id: Date.now(),
+      url: `${BACKEND_API_URL}/auth/verify-token`,
+      method: "GET",
+      version: "HTTP/1.1",
+      headers: {
+        "Content-Type": "application/json",
+        ...this.getBackendHeaders(),
+      },
+    })
+
+    const res = await response
+    if (E.isLeft(res)) {
+      return false
+    }
+
+    return res.right.isValid
+  },
 }

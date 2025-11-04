@@ -56,9 +56,35 @@
             <span class="truncate" :class="{ 'text-accent': isSelected }">
               {{ collectionName }}
             </span>
+            <!-- Mock Server Status Indicator -->
+            <span
+              v-if="mockServerStatus.exists"
+              v-tippy="{ theme: 'tooltip' }"
+              :title="
+                mockServerStatus.isActive
+                  ? t('mock_server.active')
+                  : t('mock_server.inactive')
+              "
+              class="ml-2 flex items-center"
+            >
+              <component
+                :is="IconServer"
+                class="svg-icons"
+                :class="{
+                  'text-green-500': mockServerStatus.isActive,
+                  'text-secondaryLight': !mockServerStatus.isActive,
+                }"
+              />
+            </span>
           </span>
         </div>
-        <div class="flex">
+        <div
+          v-if="isCollectionLoading && !isOpen"
+          class="flex items-center px-2"
+        >
+          <HoppSmartSpinner />
+        </div>
+        <div v-else class="flex">
           <HoppButtonSecondary
             v-if="!hasNoTeamAccess"
             v-tippy="{ theme: 'tooltip' }"
@@ -108,6 +134,10 @@
                   @keyup.x="exportAction?.$el.click()"
                   @keyup.p="propertiesAction?.$el.click()"
                   @keyup.t="runCollectionAction?.$el.click()"
+                  @keyup.s="sortAction?.$el.click()"
+                  @keyup.m="
+                    isMockServerVisible && mockServerAction?.$el.click()
+                  "
                   @keyup.escape="hide()"
                 >
                   <HoppSmartItem
@@ -149,6 +179,23 @@
                     "
                   />
                   <HoppSmartItem
+                    v-if="
+                      !hasNoTeamAccess &&
+                      isRootCollection &&
+                      isMockServerVisible
+                    "
+                    ref="mockServerAction"
+                    :icon="IconServer"
+                    :label="t('mock_server.create_mock_server')"
+                    :shortcut="['M']"
+                    @click="
+                      () => {
+                        handleMockServerAction()
+                        hide()
+                      }
+                    "
+                  />
+                  <HoppSmartItem
                     v-if="!hasNoTeamAccess"
                     ref="edit"
                     :icon="IconEdit"
@@ -157,6 +204,19 @@
                     @click="
                       () => {
                         emit('edit-collection')
+                        hide()
+                      }
+                    "
+                  />
+                  <HoppSmartItem
+                    v-if="!hasNoTeamAccess && isChildrenSortable"
+                    ref="sortAction"
+                    :icon="IconArrowUpDown"
+                    :label="t('action.sort')"
+                    :shortcut="['S']"
+                    @click="
+                      () => {
+                        sortCollection()
                         hide()
                       }
                     "
@@ -201,6 +261,7 @@
                       }
                     "
                   />
+
                   <HoppSmartItem
                     v-if="!hasNoTeamAccess"
                     ref="deleteAction"
@@ -259,8 +320,16 @@ import IconFolderOpen from "~icons/lucide/folder-open"
 import IconFolderPlus from "~icons/lucide/folder-plus"
 import IconMoreVertical from "~icons/lucide/more-vertical"
 import IconPlaySquare from "~icons/lucide/play-square"
+import IconServer from "~icons/lucide/server"
 import IconSettings2 from "~icons/lucide/settings-2"
 import IconTrash2 from "~icons/lucide/trash-2"
+import IconArrowUpDown from "~icons/lucide/arrow-up-down"
+import { CurrentSortValuesService } from "~/services/current-sort.service"
+import { useService } from "dioc/vue"
+import { useMockServerStatus } from "~/composables/mockServer"
+import { useMockServerVisibility } from "~/composables/mockServerVisibility"
+import { platform } from "~/platform"
+import { invokeAction } from "~/helpers/actions"
 
 type CollectionType = "my-collections" | "team-collections"
 type FolderType = "collection" | "folder"
@@ -285,6 +354,7 @@ const props = withDefaults(
     collectionMoveLoading?: string[]
     isLastItem?: boolean
     duplicateCollectionLoading?: boolean
+    teamLoadingCollections?: string[]
   }>(),
   {
     id: "",
@@ -296,7 +366,9 @@ const props = withDefaults(
     exportLoading: false,
     hasNoTeamAccess: false,
     isLastItem: false,
-    duplicateLoading: false,
+    duplicateCollectionLoading: false,
+    collectionMoveLoading: () => [],
+    teamLoadingCollections: () => [],
   }
 )
 
@@ -310,12 +382,21 @@ const emit = defineEmits<{
   (event: "duplicate-collection"): void
   (event: "export-data"): void
   (event: "remove-collection"): void
+  (event: "create-mock-server"): void
   (event: "drop-event", payload: DataTransfer): void
   (event: "drag-event", payload: DataTransfer): void
   (event: "dragging", payload: boolean): void
   (event: "update-collection-order", payload: DataTransfer): void
   (event: "update-last-collection-order", payload: DataTransfer): void
   (event: "run-collection", collectionID: string): void
+  (
+    event: "sort-collections",
+    payload: {
+      collectionID: string
+      sortOrder: "asc" | "desc"
+      collectionRefID: string
+    }
+  ): void
 }>()
 
 const tippyActions = ref<HTMLDivElement | null>(null)
@@ -325,19 +406,83 @@ const edit = ref<HTMLButtonElement | null>(null)
 const duplicateAction = ref<HTMLButtonElement | null>(null)
 const deleteAction = ref<HTMLButtonElement | null>(null)
 const exportAction = ref<HTMLButtonElement | null>(null)
+const mockServerAction = ref<HTMLButtonElement | null>(null)
 const options = ref<TippyComponent | null>(null)
 const propertiesAction = ref<HTMLButtonElement | null>(null)
 const runCollectionAction = ref<HTMLButtonElement | null>(null)
+const sortAction = ref<HTMLButtonElement | null>(null)
 
 const dragging = ref(false)
 const ordering = ref(false)
 const orderingLastItem = ref(false)
 const dropItemID = ref("")
 
+/**
+ * Determines if the collection/folder is sortable.
+ * A collection/folder is sortable if it has more than one request or more than one child folder.
+ * or one request and one child folder.
+ */
+const isChildrenSortable = computed(() => {
+  if (!props.data) return false
+
+  if (props.collectionsType === "my-collections") {
+    const collection = props.data as HoppCollection
+    const req = collection.requests.length
+    const fol = collection.folders.length
+
+    return req > 1 || fol > 1 || (req === 1 && fol === 1)
+  }
+
+  const teamCollection = props.data as TeamCollection
+  const req = teamCollection.requests?.length ?? 0
+  const child = teamCollection.children?.length ?? 0
+
+  return req > 1 || child > 1 || (req === 1 && child === 1)
+})
+
 const currentReorderingStatus = useReadonlyStream(currentReorderingStatus$, {
   type: "collection",
   id: "",
   parentID: "",
+})
+
+const currentSortValuesService = useService(CurrentSortValuesService)
+
+const collectionRefID = computed(() => {
+  return props.collectionsType === "my-collections"
+    ? (props.data as HoppCollection)._ref_id
+    : props.id
+})
+
+const currentSortOrder = ref<"asc" | "desc">(
+  currentSortValuesService.getSortOption(collectionRefID.value ?? "personal")
+    ?.sortOrder ?? "asc"
+)
+const isCollectionLoading = computed(() => {
+  return props.teamLoadingCollections!.includes(props.id)
+})
+
+// Mock Server Status
+const { isMockServerVisible } = useMockServerVisibility()
+const { getMockServerStatus } = useMockServerStatus()
+
+const mockServerStatus = computed(() => {
+  if (!isMockServerVisible.value) {
+    return { exists: false, isActive: false }
+  }
+
+  const collectionId =
+    props.collectionsType === "my-collections"
+      ? ((props.data as HoppCollection).id ??
+        (props.data as HoppCollection)._ref_id)
+      : (props.data as TeamCollection).id
+
+  return getMockServerStatus(collectionId || "")
+})
+
+// Determine if this is a root collection (not a child folder)
+const isRootCollection = computed(() => {
+  return props.folderType === "collection"
 })
 
 // Used to determine if the collection is being dragged to a different destination
@@ -494,6 +639,29 @@ const isCollLoading = computed(() => {
   }
   return false
 })
+
+const sortCollection = () => {
+  currentSortOrder.value = currentSortOrder.value === "asc" ? "desc" : "asc"
+
+  emit("sort-collections", {
+    collectionID: props.id,
+    sortOrder: currentSortOrder.value,
+    collectionRefID: collectionRefID.value ?? "personal",
+  })
+}
+
+const handleMockServerAction = () => {
+  const currentUser = platform.auth.getCurrentUser()
+
+  if (!currentUser) {
+    // Show login modal if user is not authenticated
+    invokeAction("modals.login.toggle")
+    return
+  }
+
+  // User is authenticated, proceed with mock server creation
+  emit("create-mock-server")
+}
 
 const resetDragState = () => {
   dragging.value = false

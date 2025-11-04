@@ -35,6 +35,8 @@ import { UserLastActiveOnInterceptor } from './interceptors/user-last-active-on.
 import { InfraTokenModule } from './infra-token/infra-token.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PubSubModule } from './pubsub/pubsub.module';
+import { SortModule } from './orchestration/sort/sort.module';
+import { MockServerModule } from './mock-server/mock-server.module';
 
 @Module({
   imports: [
@@ -122,6 +124,8 @@ import { PubSubModule } from './pubsub/pubsub.module';
     HealthModule,
     AccessTokenModule,
     InfraTokenModule,
+    SortModule,
+    MockServerModule,
   ],
   providers: [
     GQLComplexityPlugin,

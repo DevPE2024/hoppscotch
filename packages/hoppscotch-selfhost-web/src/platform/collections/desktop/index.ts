@@ -1,9 +1,10 @@
 import { CollectionsPlatformDef } from "@hoppscotch/common/platform/collections"
-import { authEvents$, def as platformAuth } from "@platform/auth/desktop"
 import { runDispatchWithOutSyncing } from "@lib/sync"
+import { authEvents$, def as platformAuth } from "@platform/auth/desktop"
 
 import {
   exportUserCollectionsToJSON,
+  runUserChildCollectionSortedSubscription,
   runUserCollectionCreatedSubscription,
   runUserCollectionDuplicatedSubscription,
   runUserCollectionMovedSubscription,
@@ -14,9 +15,15 @@ import {
   runUserRequestDeletedSubscription,
   runUserRequestMovedSubscription,
   runUserRequestUpdatedSubscription,
+  runUserRootCollectionsSortedSubscription,
 } from "./api"
 import { collectionsSyncer, getStoreByCollectionType } from "./sync"
 
+import {
+  ReqType,
+  UserCollectionDuplicatedData,
+  UserRequest,
+} from "@api/generated/graphql"
 import { runGQLSubscription } from "@hoppscotch/common/helpers/backend/GQLClient"
 import {
   addGraphqlCollection,
@@ -44,6 +51,8 @@ import {
   saveRESTRequestAs,
   setGraphqlCollections,
   setRESTCollections,
+  sortRESTCollection,
+  sortRESTFolder,
   updateRESTCollectionOrder,
   updateRESTRequestOrder,
 } from "@hoppscotch/common/newstore/collections"
@@ -57,11 +66,6 @@ import {
   HoppRESTRequest,
 } from "@hoppscotch/data"
 import * as E from "fp-ts/Either"
-import {
-  ReqType,
-  UserCollectionDuplicatedData,
-  UserRequest,
-} from "@api/generated/graphql"
 import { gqlCollectionsSyncer } from "./gqlCollections.sync"
 
 function initCollectionsSync() {
@@ -288,6 +292,10 @@ function setupSubscriptions() {
     setupUserCollectionOrderUpdatedSubscription()
   const userCollectionDuplicatedSub =
     setupUserCollectionDuplicatedSubscription()
+  const userRootCollectionsSortedSub =
+    setupUserRootCollectionsSortedSubscription()
+  const userChildCollectionSortedSub =
+    setupUserChildCollectionSortedSubscription()
 
   const userRequestCreatedSub = setupUserRequestCreatedSubscription()
   const userRequestUpdatedSub = setupUserRequestUpdatedSubscription()
@@ -301,6 +309,8 @@ function setupSubscriptions() {
     userCollectionMovedSub,
     userCollectionOrderUpdatedSub,
     userCollectionDuplicatedSub,
+    userRootCollectionsSortedSub,
+    userChildCollectionSortedSub,
     userRequestCreatedSub,
     userRequestUpdatedSub,
     userRequestDeletedSub,
@@ -723,6 +733,56 @@ function setupUserCollectionDuplicatedSubscription() {
   })
 
   return userCollectionDuplicatedSub
+}
+
+const setupUserRootCollectionsSortedSubscription = () => {
+  const [userRootCollectionsSorted$, userRootCollectionsSortedSub] =
+    runUserRootCollectionsSortedSubscription()
+
+  userRootCollectionsSorted$.subscribe((res) => {
+    if (E.isRight(res)) {
+      runDispatchWithOutSyncing(() => {
+        if (res.right.userRootCollectionsSorted) {
+          const { sortOption } = res.right.userRootCollectionsSorted
+
+          const sortOrder = sortOption === "TITLE_ASC" ? "asc" : "desc"
+
+          sortRESTCollection(null, sortOrder)
+        }
+      })
+    }
+  })
+  return userRootCollectionsSortedSub
+}
+
+const setupUserChildCollectionSortedSubscription = () => {
+  const [userChildCollectionSorted$, userChildCollectionSortedSub] =
+    runUserChildCollectionSortedSubscription()
+
+  userChildCollectionSorted$.subscribe((res) => {
+    if (E.isRight(res)) {
+      runDispatchWithOutSyncing(() => {
+        if (res.right.userChildCollectionsSorted) {
+          const { parentCollectionID, sortOption } =
+            res.right.userChildCollectionsSorted
+
+          if (!parentCollectionID) return
+
+          const sortOrder = sortOption === "TITLE_ASC" ? "asc" : "desc"
+
+          const sourcePath = getCollectionPathFromCollectionID(
+            parentCollectionID,
+            restCollectionStore.value.state
+          )
+
+          if (!sourcePath) return
+
+          sortRESTFolder(sourcePath, sortOrder)
+        }
+      })
+    }
+  })
+  return userChildCollectionSortedSub
 }
 
 function setupUserRequestCreatedSubscription() {
